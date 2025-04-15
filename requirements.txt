@@ -1,0 +1,9 @@
+uvicorn==0.22.0
+fastapi
+pymongo
+boto3==1.37.32
+pymongo==4.7.3
+python-dotenv
+google==3.0.0
+pillow==10.2.0
+groq==0.22.0

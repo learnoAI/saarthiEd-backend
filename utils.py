@@ -196,7 +196,7 @@ def main(images):
     
     print(f"Processed {len(images)} images")
 
-sw = os.listdir("sw")
-sw= [f"sw/{f}" for f in sw]
+# sw = os.listdir("sw")
+# sw= [f"sw/{f}" for f in sw]
 
-main(sw)
+# main(sw)
