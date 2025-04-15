@@ -7,8 +7,12 @@ import json
 import PIL.Image
 from io import BytesIO
 import re
-
+import os.path
+from datetime import datetime
+from conns import collection, s3_client
 load_dotenv()
+
+S3_BUCKET_NAME = "learno-pdf-document"
 
 groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 genai.configure(api_key=os.environ.get("GOOGLE_API_KEY"))
@@ -17,6 +21,27 @@ gemini_client = genai.GenerativeModel('gemini-2.0-flash-lite')
 def encode_image(image_path):
   with open(image_path, "rb") as image_file:
     return image_file.read()
+
+def upload_to_s3(file_path):
+    try:
+        file_name = os.path.basename(file_path)
+        s3_key = f"worksheets-{file_name}"
+        
+        # Upload with public-read ACL
+        with open(file_path, 'rb') as file_data:
+            s3_client.upload_fileobj(
+                file_data, 
+                S3_BUCKET_NAME, 
+                s3_key,
+                ExtraArgs={'ACL': 'public-read'}
+            )
+        
+        # Generate S3 URL
+        s3_url = f"https://{S3_BUCKET_NAME}.s3.ap-south-1.amazonaws.com/{s3_key}"
+        return s3_url
+    except Exception as e:
+        print(f"Error uploading to S3: {str(e)}")
+        return None
 
 def fix_json(json_str):
     json_match = re.search(r'(\{.*\})', json_str, re.DOTALL)
@@ -89,34 +114,89 @@ def use_gemini(image_bytes):
     except Exception as e:
         return {"error": f"Gemini API error: {str(e)}"}
 
-def main(images):
-    gr = []
-    gm = []
-    errors = []
+def extract_entries_from_response(response_data):
+    entries = []
     
-    for i, image in enumerate(images):
-        try:
-            image_bytes = encode_image(image)
-            # gr_response = use_groq(image_bytes)
-            # gr.append(gr_response)
-            gm_response = use_gemini(image_bytes)
-            gm.append(gm_response)
+    # Filter out metadata fields and process only question/answer pairs
+    for key, value in response_data.items():
+        if not key.startswith('_') and isinstance(value, dict) and 'question' in value and 'answer' in value:
+            entries.append({
+                'question_id': key,
+                'question': value['question'],
+                'answer': value['answer']
+            })
+    
+    return entries
 
-            if isinstance(gm_response, dict) and "error" in gm_response:
-                errors.append({"image": image, "error": gm_response["error"], "index": i})
+def main(images):
+    gr_responses = []
+    gm_responses = []
+    errors = []
+    mongo_documents = []
+    
+    for i, image_path in enumerate(images):
+        try:
+            # Extract filename without path and extension for worksheet name
+            filename = os.path.basename(image_path)
+            worksheet_name = os.path.splitext(filename)[0]
+            
+            # Upload image to S3 and get the URL
+            s3_url = upload_to_s3(image_path)
+            if not s3_url:
+                raise Exception(f"Failed to upload image to S3: {image_path}")
+            
+            image_bytes = encode_image(image_path)
+            
+            # Process with Groq
+            gr_response = use_groq(image_bytes)
+            gr_responses.append(gr_response)
+            
+            # Save worksheet to MongoDB with proper structure
+            if "error" not in gr_response:
+                entries = extract_entries_from_response(gr_response)
+                
+                worksheet_doc = {
+                    "name": worksheet_name,
+                    "entries": entries,
+                    "processor": "groq",
+                    "model": "llama-4-scout-17b-16e-instruct",
+                    "processed_at": datetime.now(),
+                    "source_image": s3_url
+                }
+                
+                mongo_documents.append(worksheet_doc)
+            
+            # Process with Gemini - for comparison only, not storing in MongoDB
+            # gm_response = use_gemini(image_bytes)
+            # gm_responses.append(gm_response)
+
+            # Check for errors
+            # if isinstance(gm_response, dict) and "error" in gm_response:
+            #     errors.append({"image": image_path, "error": gm_response["error"], "index": i})
                 
         except Exception as e:
-            errors.append({"image": image, "error": str(e), "index": i})
+            errors.append({"image": image_path, "error": str(e), "index": i})
     
-    # with open("llama4_scout_response.json", "w") as f:
-    #     json.dump(gr, f, indent=4)
-    with open("gemini2_flash_lite_response.json", "w") as f:
-        json.dump(gm, f, indent=4)
+    # Save worksheets to MongoDB
+    if mongo_documents:
+        collection.insert_many(mongo_documents)
+        print(f"Inserted {len(mongo_documents)} worksheet documents into MongoDB")
+    
+    # Save raw responses to files for reference
+    with open("llama4_scout_response.json", "w") as f:
+        json.dump(gr_responses, f, indent=4)
+        
+    # with open("gemini2_flash_lite_response.json", "w") as f:
+    #     json.dump(gm_responses, f, indent=4)
         
     if errors:
         with open("json_decode_errors.json", "w") as f:
             json.dump(errors, f, indent=4)
         print(f"Encountered {len(errors)} errors. See json_decode_errors.json for details.")
+    
+    print(f"Processed {len(images)} images")
 
-sw = ['sw/1000123982.jpg','sw/WhatsApp Image 2025-03-11 at 11.25.16 AM (3).jpeg',"sw/1000123926.jpg","sw/1000123927.jpg","sw/1000123928.jpg","sw/1000123929.jpg","sw/1000123930.jpg","sw/1000123931.jpg","sw/1000123932.jpg","sw/1000123933.jpg","sw/1000123934.jpg"]
+sw = os.listdir("sw")
+sw= [f"sw/{f}" for f in sw]
+
 main(sw)
