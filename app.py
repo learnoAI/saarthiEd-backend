@@ -7,7 +7,7 @@ import shutil
 from utils import use_groq, extract_entries_from_response, upload_to_s3
 from datetime import datetime
 from conns import collection
-import uvicorn
+# import uvicorn
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
@@ -26,6 +26,10 @@ executor = ThreadPoolExecutor(max_workers=5)
 @app.get("/")
 async def root():
     return {"message": "SaarthiEd API is running"}
+
+@app.get("/healthcheck")
+async def healthcheck():
+    return {"message": "ok"}
 
 async def process_stud_worksheets(token_no, worksheet_name, file):
     try:
@@ -111,5 +115,5 @@ async def process_worksheets(token_no: str, worksheet_name: str, files: List[Upl
         "errors": errors
     }
 
-if __name__ == "__main__":
-    uvicorn.run("app:app", port=8080, reload=True)
+# if __name__ == "__main__":
+#     uvicorn.run("app:app", port=8080, reload=True)
