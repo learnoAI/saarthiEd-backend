@@ -6,3 +6,4 @@ pymongo==4.7.3
 python-dotenv
 google==3.0.0
 groq==0.22.0
+google==3.0.0
