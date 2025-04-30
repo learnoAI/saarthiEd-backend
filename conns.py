@@ -2,6 +2,7 @@ from pymongo import MongoClient
 from dotenv import load_dotenv
 import os
 import boto3
+from groq import Groq
 
 load_dotenv()
 
@@ -15,3 +16,5 @@ s3_client = boto3.client(
     aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
     aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY")
     )
+
+groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))

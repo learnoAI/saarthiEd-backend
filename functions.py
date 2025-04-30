@@ -21,9 +21,6 @@ logging.basicConfig(
 load_dotenv()
 
 class RateLimiter:
-    """
-    Implements strict rate limiting for Gemini API
-    """
     def __init__(self, max_requests=30, per_seconds=60):
         self.max_requests = max_requests
         self.per_seconds = per_seconds
@@ -31,9 +28,6 @@ class RateLimiter:
         self.lock = Lock()
 
     def wait(self):
-        """
-        Implement rate limiting with precise control
-        """
         current_time = time.time()
         
         with self.lock:

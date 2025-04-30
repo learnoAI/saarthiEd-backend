@@ -27,13 +27,12 @@ executor = ThreadPoolExecutor(max_workers=5)
 async def root():
     return {"message": "SaarthiEd API is running"}
 
-async def process_single_file(file):
+async def process_stud_worksheets(token_no, worksheet_name, file):
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as temp:
             shutil.copyfileobj(file.file, temp)
             temp_path = temp.name
         
-        worksheet_name = os.path.splitext(file.filename)[0]
         
         s3_url = await asyncio.get_event_loop().run_in_executor(
             executor, upload_to_s3, temp_path
@@ -57,6 +56,7 @@ async def process_single_file(file):
         
         worksheet_doc = {
             "name": worksheet_name,
+            "token_no": token_no,
             "entries": entries,
             "processor": "groq",
             "model": "llama-4-scout-17b-16e-instruct",
@@ -86,23 +86,22 @@ async def process_single_file(file):
         return {"filename": file.filename, "error": str(e), "success": False}
 
 @app.post("/process-worksheets")
-async def process_worksheets(files: List[UploadFile] = File(...)):
-    """
-    Upload and process student worksheet images concurrently.
-    Returns the processed data and saves it to the database.
-    """
+async def process_worksheets(token_no: str, worksheet_name: str, files: List[UploadFile] = File(...)):
     if not files:
         raise HTTPException(status_code=400, detail="No files were uploaded")
     
-    # Process all files concurrently
-    tasks = [process_single_file(file) for file in files]
+    if not token_no:
+        raise HTTPException(status_code=400, detail="token_no is required")
+    
+    if not worksheet_name:
+        raise HTTPException(status_code=400, detail="worksheet_name is required")
+    
+    tasks = [process_stud_worksheets(token_no, worksheet_name, file) for file in files]
     results = await asyncio.gather(*tasks)
     
-    # Separate successful results and errors
     processed = [r for r in results if r.get("success", False)]
     errors = [r for r in results if not r.get("success", False)]
     
-    # Remove success field from processed results
     for r in processed:
         r.pop("success", None)
     
