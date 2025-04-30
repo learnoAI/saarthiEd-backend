@@ -21,7 +21,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Create a thread pool executor
 executor = ThreadPoolExecutor(max_workers=5)
 
 @app.get("/")
@@ -29,7 +28,6 @@ async def root():
     return {"message": "SaarthiEd API is running"}
 
 async def process_single_file(file):
-    """Process a single file in a separate thread"""
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as temp:
             shutil.copyfileobj(file.file, temp)
@@ -37,7 +35,6 @@ async def process_single_file(file):
         
         worksheet_name = os.path.splitext(file.filename)[0]
         
-        # Run S3 upload in thread pool
         s3_url = await asyncio.get_event_loop().run_in_executor(
             executor, upload_to_s3, temp_path
         )
@@ -45,11 +42,9 @@ async def process_single_file(file):
         if not s3_url:
             raise Exception(f"Failed to upload image to S3: {file.filename}")
         
-        # Read image bytes
         with open(temp_path, "rb") as image_file:
             image_bytes = image_file.read()
         
-        # Run Groq processing in thread pool
         gr_response = await asyncio.get_event_loop().run_in_executor(
             executor, use_groq, image_bytes
         )
@@ -58,7 +53,6 @@ async def process_single_file(file):
             os.unlink(temp_path)
             return {"filename": file.filename, "error": gr_response["error"], "success": False}
         
-        # Extract entries
         entries = extract_entries_from_response(gr_response)
         
         worksheet_doc = {
@@ -70,7 +64,6 @@ async def process_single_file(file):
             "source_image": s3_url
         }
         
-        # Run MongoDB insertion in thread pool
         await asyncio.get_event_loop().run_in_executor(
             executor, collection.insert_one, worksheet_doc
         )
