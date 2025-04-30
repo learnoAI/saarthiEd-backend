@@ -68,7 +68,6 @@ async def process_single_file(file):
             executor, collection.insert_one, worksheet_doc
         )
         
-        # Clean up temp file
         os.unlink(temp_path)
         
         return {
@@ -114,4 +113,4 @@ async def process_worksheets(files: List[UploadFile] = File(...)):
     }
 
 if __name__ == "__main__":
-    uvicorn.run("app:app", port=8000, reload=True)
+    uvicorn.run("app:app", port=8080, reload=True)
