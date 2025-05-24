@@ -4,7 +4,8 @@ from typing import List
 import os
 import tempfile
 import shutil
-from utils import use_gemini_for_ocr, use_gemini_for_scoring, save_results_to_mongo, upload_to_s3, extract_entries_from_response
+from utils import (use_gemini_for_ocr, use_gemini_for_scoring, save_results_to_mongo, 
+                  upload_to_s3, extract_entries_from_response, deduplicate_student_entries)
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -36,7 +37,7 @@ EXPECTED_ANSWERS = load_expected_answers()
 
 @app.get("/")
 async def root():
-    return {"message": "SaarthiEd API is running with Gemini 2.0 Flash"}
+    return {"message": "SaarthiEd API is running with Gemini 2.5 Flash"}
 
 @app.get("/healthcheck")
 async def healthcheck():
@@ -61,78 +62,121 @@ def find_expected_answers(worksheet_name):
     
     return expected_answers, None
 
-async def process_student_worksheet(token_no, worksheet_name, file):
-    """Process a single student worksheet using Gemini 2.5 Flash"""
+async def process_student_worksheet(token_no, worksheet_name, files):
+    """Process multiple images of the same worksheet using Gemini 2.5 Flash"""
+    temp_paths = []
+    s3_urls = []
+    all_student_entries = []
+    combined_filenames = []
+    
     try:
-        # Create temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as temp:
-            shutil.copyfileobj(file.file, temp)
-            temp_path = temp.name
+        # First, process all files and collect image bytes
+        all_image_bytes = []
         
-        # Upload to S3
-        s3_url = await asyncio.get_event_loop().run_in_executor(
-            executor, upload_to_s3, temp_path
-        )
+        for file in files:
+            combined_filenames.append(file.filename)
+            # Create temporary file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as temp:
+                shutil.copyfileobj(file.file, temp)
+                temp_path = temp.name
+                temp_paths.append(temp_path)
+            
+            # Upload to S3
+            s3_url = await asyncio.get_event_loop().run_in_executor(
+                executor, upload_to_s3, temp_path
+            )
+            
+            if not s3_url:
+                raise Exception(f"Failed to upload image to S3: {file.filename}")
+            
+            s3_urls.append(s3_url)
+            
+            # Read image bytes
+            with open(temp_path, "rb") as image_file:
+                image_bytes = image_file.read()
+                all_image_bytes.append(image_bytes)
         
-        if not s3_url:
-            raise Exception(f"Failed to upload image to S3: {file.filename}")
-        
-        # Read image bytes
-        with open(temp_path, "rb") as image_file:
-            image_bytes = image_file.read()
-        
-        # Use Gemini for OCR
-        print(f"Processing {file.filename} with Gemini OCR...")
+        # Use Gemini for OCR with all images at once
+        print(f"Processing {len(files)} images with Gemini OCR in a single batch...")
         ocr_response = await asyncio.get_event_loop().run_in_executor(
-            executor, use_gemini_for_ocr, image_bytes
+            executor, use_gemini_for_ocr, all_image_bytes
         )
         
         if "error" in ocr_response:
-            os.unlink(temp_path)
-            return {"filename": file.filename, "error": ocr_response["error"], "success": False}
+            for path in temp_paths:
+                try:
+                    os.unlink(path)
+                except:
+                    pass
+            return {"filename": ", ".join(combined_filenames), "error": ocr_response["error"], "success": False}
         
         # Extract entries from OCR response
         student_entries = extract_entries_from_response(ocr_response)
+        all_student_entries.extend(student_entries)
         
-        if not student_entries:
-            os.unlink(temp_path)
-            return {"filename": file.filename, "error": "No questions extracted from image", "success": False}
+        if not all_student_entries:
+            for path in temp_paths:
+                try:
+                    os.unlink(path)
+                except:
+                    pass
+            return {"filename": ", ".join(combined_filenames), "error": "No questions extracted from images", "success": False}
+        
+        # Deduplicate entries if we have multiple images
+        if len(files) > 1:
+            print(f"Deduplicating {len(all_student_entries)} entries from {len(files)} images")
+            all_student_entries = deduplicate_student_entries(all_student_entries)
         
         # Find expected answers
         expected_answers, error_msg = find_expected_answers(worksheet_name)
         
         if expected_answers is None:
-            os.unlink(temp_path)
-            return {"filename": file.filename, "error": error_msg, "success": False}
+            for path in temp_paths:
+                try:
+                    os.unlink(path)
+                except:
+                    pass
+            return {"filename": ", ".join(combined_filenames), "error": error_msg, "success": False}
         
         # Use Gemini for intelligent scoring
-        print(f"Scoring {file.filename} with Gemini AI...")
+        print(f"Scoring combined worksheet with {len(files)} images using Gemini AI...")
         scoring_result = await asyncio.get_event_loop().run_in_executor(
-            executor, use_gemini_for_scoring, student_entries, expected_answers, worksheet_name
+            executor, use_gemini_for_scoring, all_student_entries, expected_answers, worksheet_name
         )
         
         if "error" in scoring_result:
-            os.unlink(temp_path)
-            return {"filename": file.filename, "error": scoring_result["error"], "success": False}
+            for path in temp_paths:
+                try:
+                    os.unlink(path)
+                except:
+                    pass
+            return {"filename": ", ".join(combined_filenames), "error": scoring_result["error"], "success": False}
         
-        # Save results to MongoDB
+        # Save results to MongoDB with all S3 URLs
         mongodb_id = await asyncio.get_event_loop().run_in_executor(
-            executor, save_results_to_mongo, token_no, worksheet_name, scoring_result, s3_url, file.filename
+            executor, save_results_to_mongo, token_no, worksheet_name, scoring_result, ";".join(s3_urls), ", ".join(combined_filenames)
         )
         
-        # Clean up temp file
-        os.unlink(temp_path)
+        # Clean up temp files
+        for path in temp_paths:
+            try:
+                os.unlink(path)
+            except:
+                pass
         
         # Prepare response
         result = {
-            "filename": file.filename,
+            "filename": ", ".join(combined_filenames),
             "worksheet_name": worksheet_name,
             "token_no": token_no,
-            "s3_url": s3_url,
+            "s3_urls": s3_urls,
             "mongodb_id": mongodb_id,
             "overall_score": (scoring_result.get("overall_score", 0)/scoring_result.get("total_possible")*40),
             "total_possible": scoring_result.get("total_possible", 40),
-            "entries_count": len(student_entries),
+            "entries_count": len(all_student_entries),
+            "images_count": len(files),
+            "is_multi_image": len(files) > 1,
+            "image_filenames": combined_filenames,
             "question_scores": scoring_result.get("question_scores", []),
             "success": True,
             "processed_with": "gemini-2.5-flash"
@@ -165,17 +209,41 @@ async def process_student_worksheet(token_no, worksheet_name, file):
                 result["zero_marks_diagnostics"] = diagnostics
         
         return result
-            
+    
     except Exception as e:
-        try:
-            os.unlink(temp_path)
-        except: 
-            pass
-        return {"filename": file.filename, "error": str(e), "success": False}
+        for path in temp_paths:
+            try:
+                os.unlink(path)
+            except: 
+                pass
+        
+        error_info = {
+            "filename": ", ".join(combined_filenames) if combined_filenames else "multiple files", 
+            "error": str(e), 
+            "success": False,
+            "images_count": len(files),
+            "is_multi_image": len(files) > 1,
+            "processed_image_count": len(all_student_entries)
+        }
+        
+        if combined_filenames:
+            error_info["image_filenames"] = combined_filenames
+            
+        return error_info
 
 @app.post("/process-worksheets")
 async def process_worksheets(token_no: str, worksheet_name: str, files: List[UploadFile] = File(...)):
-    """Process multiple student worksheets using Gemini 2.5 Flash for OCR and scoring"""
+    """
+    Process multiple images of the same worksheet.
+    
+    This endpoint accepts multiple image files that belong to the same worksheet.
+    All images will be OCR'd individually and then scored collectively as a single worksheet.
+    
+    Parameters:
+    - token_no: Student token number
+    - worksheet_name: Name of the worksheet being processed
+    - files: Multiple image files of the same worksheet (supports JPG, PNG)
+    """
     if not files:
         raise HTTPException(status_code=400, detail="No files were uploaded")
     
@@ -185,21 +253,23 @@ async def process_worksheets(token_no: str, worksheet_name: str, files: List[Upl
     if not worksheet_name:
         raise HTTPException(status_code=400, detail="worksheet_name is required")
     
-    print(f"Processing {len(files)} worksheets for token {token_no}, worksheet {worksheet_name}")
+    print(f"Processing {len(files)} images for worksheet {worksheet_name}, token {token_no}")
     
-    # Process all files in parallel
-    tasks = [process_student_worksheet(token_no, worksheet_name, file) for file in files]
-    results = await asyncio.gather(*tasks)
+    # Process all files for a single worksheet
+    result = await process_student_worksheet(token_no, worksheet_name, files)
     
-    # Separate successful and failed results
-    processed = [r for r in results if r.get("success", False)]
-    errors = [r for r in results if not r.get("success", False)]
+    # Check if processing was successful
+    if result.get("success", False):
+        processed = [result]
+        errors = []
+        # Clean up success flag from response
+        result.pop("success", None)
+    else:
+        processed = []
+        errors = [result]
     
-    # Clean up success flag from response
-    for r in processed: 
-        r.pop("success", None)
-    
-    return {
+    # Add multi-image processing info to the main response
+    response = {
         "success": len(processed) > 0,
         "processed_count": len(processed),
         "error_count": len(errors),
@@ -207,6 +277,12 @@ async def process_worksheets(token_no: str, worksheet_name: str, files: List[Upl
         "errors": errors,
         "model_used": "gemini-2.5-flash"
     }
+    
+    if processed and len(processed) > 0:
+        response["total_images_processed"] = processed[0].get("images_count", 1)
+        response["is_multi_image"] = processed[0].get("is_multi_image", False)
+        
+    return response
 
 if __name__ == "__main__":
     import uvicorn 
