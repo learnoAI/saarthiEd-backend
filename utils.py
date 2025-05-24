@@ -1,20 +1,12 @@
-import base64
 import os
 import json
-import re
 from conns import s3_client, gemini_client, collection
 from google.genai import types
 from datetime import datetime
-from bson import ObjectId
 from PIL import Image
 import io
 
 S3_BUCKET_NAME = "learno-pdf-document"
-
-def encode_image(image_path):
-    """Read image file as bytes"""
-    with open(image_path, "rb") as image_file:
-        return image_file.read()
 
 def upload_to_s3(file_path):
     """Upload file to S3 and return public URL"""
@@ -37,57 +29,46 @@ def upload_to_s3(file_path):
         return None
 
 def use_gemini_for_ocr(image_bytes_list):
-    """
-    Use Gemini 2.5 Flash for OCR to extract questions and answers from worksheet images
-    
-    This function can process multiple worksheet images at once and extracts questions and answers.
-    Accepts either a single image_bytes or a list of image_bytes.
-    """
     try:
-        # Check if we have a single image or multiple images
         if not isinstance(image_bytes_list, list):
             image_bytes_list = [image_bytes_list]
         
-        # Process each image into proper format
         processed_images = []
         for image_bytes in image_bytes_list:
-            # Convert bytes to PIL Image for better processing
             image = Image.open(io.BytesIO(image_bytes))
             
             # Convert to RGB if needed
             if image.mode != 'RGB':
                 image = image.convert('RGB')
             
-            # Save to bytes buffer
             img_buffer = io.BytesIO()
             image.save(img_buffer, format='JPEG', quality=95)
             processed_images.append(img_buffer.getvalue())
         
-        # Prepare the prompt for OCR
         ocr_prompt = """
-Extract all questions and their corresponding student answers from these worksheet images. 
-Return the data in JSON format where each question is keyed as "q1", "q2", etc.
+            Extract all questions and their corresponding student answers from these worksheet images. 
+            Return the data in JSON format where each question is keyed as "q1", "q2", etc.
 
-IMPORTANT INSTRUCTIONS:
-1. Extract the student's answers EXACTLY as written - do not correct or modify them
-2. If a question is unanswered, use an empty string "" for the answer
-3. Include both the question text and the student's answer
-4. Number questions sequentially starting from q1
-5. These may be multiple images from the same worksheet - consolidate all questions and answers
-6. For duplicate questions across images, include all versions with unique keys (q1, q2, etc.)
+            IMPORTANT INSTRUCTIONS:
+            1. Extract the student's answers EXACTLY as written - do not correct or modify them
+            2. If a question is unanswered, use an empty string "" for the answer
+            3. Include both the question text and the student's answer
+            4. Number questions sequentially starting from q1
+            5. These may be multiple images from the same worksheet - consolidate all questions and answers
+            6. For duplicate questions across images, include all versions with unique keys (q1, q2, etc.)
 
-Return format:
-{
-  "q1": {
-    "question": "<question_text>",
-    "answer": "<student_answer_exactly_as_written>"
-  },
-  "q2": {
-    "question": "<question_text>", 
-    "answer": "<student_answer_exactly_as_written>"
-  }
-}
-"""
+            Return format:
+            {
+            "q1": {
+                "question": "<question_text>",
+                "answer": "<student_answer_exactly_as_written>"
+            },
+            "q2": {
+                "question": "<question_text>", 
+                "answer": "<student_answer_exactly_as_written>"
+            }
+            }
+            """
         
         # Prepare content array with prompt and all images
         contents = [ocr_prompt]
@@ -315,9 +296,3 @@ def deduplicate_student_entries(all_entries):
     print(f"Deduplicated {len(all_entries)} entries to {len(deduplicated)} unique questions")
     return deduplicated
 
-# For backward compatibility - use Gemini instead of Groq
-def use_groq(image_bytes):
-    """
-    Backward compatibility function - now uses Gemini instead of Groq
-    """
-    return use_gemini_for_ocr(image_bytes)
