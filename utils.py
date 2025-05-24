@@ -94,17 +94,14 @@ Return format:
         for image_data in processed_images:
             contents.append(types.Part.from_bytes(data=image_data, mime_type='image/jpeg'))
             
-        # Generate content using Gemini with all images at once
         print(f"Sending {len(processed_images)} images to Gemini OCR in a single request...")
         response = gemini_client.models.generate_content(
             model='gemini-2.5-flash-preview-05-20',
             contents=contents
         )
         
-        # Try to parse JSON from response
         response_text = response.text.strip()
         
-        # Clean up the response text if it has markdown formatting
         if response_text.startswith('```json'):
             response_text = response_text[7:]
         if response_text.endswith('```'):
