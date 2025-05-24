@@ -233,17 +233,6 @@ async def process_student_worksheet(token_no, worksheet_name, files):
 
 @app.post("/process-worksheets")
 async def process_worksheets(token_no: str, worksheet_name: str, files: List[UploadFile] = File(...)):
-    """
-    Process multiple images of the same worksheet.
-    
-    This endpoint accepts multiple image files that belong to the same worksheet.
-    All images will be OCR'd individually and then scored collectively as a single worksheet.
-    
-    Parameters:
-    - token_no: Student token number
-    - worksheet_name: Name of the worksheet being processed
-    - files: Multiple image files of the same worksheet (supports JPG, PNG)
-    """
     if not files:
         raise HTTPException(status_code=400, detail="No files were uploaded")
     
