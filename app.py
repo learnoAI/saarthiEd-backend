@@ -4,7 +4,7 @@ from typing import List
 import os
 import tempfile
 import shutil
-from utils import use_groq, extract_entries_from_response, upload_to_s3
+from utils import use_gemini_for_ocr, use_gemini_for_scoring, save_results_to_mongo, upload_to_s3, extract_entries_from_response
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -22,6 +22,7 @@ app.add_middleware(
 executor = ThreadPoolExecutor(max_workers=5)
 
 def load_expected_answers():
+    """Load expected answers from JSON file"""
     try:
         with open('Results/dataset_questions_answers.json', 'r') as f:
             data = json.load(f)
@@ -35,19 +36,14 @@ EXPECTED_ANSWERS = load_expected_answers()
 
 @app.get("/")
 async def root():
-    return {"message": "SaarthiEd API is running"}
+    return {"message": "SaarthiEd API is running with Gemini 2.0 Flash"}
 
 @app.get("/healthcheck")
 async def healthcheck():
-    return {"message": "ok"}
+    return {"message": "ok", "model": "gemini-2.0-flash"}
 
-def evaluate_answers(worksheet_name, entries):
-    print(f"Evaluating worksheet: {worksheet_name} with {len(entries)} entries")
-    marks = 0
-    total_questions = 40
-    evaluated_entries = []
-    error_message = None
-    
+def find_expected_answers(worksheet_name):
+    """Find expected answers for a given worksheet name"""
     worksheet_range = None
     for range_key in EXPECTED_ANSWERS.keys():
         if worksheet_name in EXPECTED_ANSWERS[range_key]:
@@ -56,89 +52,24 @@ def evaluate_answers(worksheet_name, entries):
             break
     
     if worksheet_range is None:
-        error_message = f"No expected answers found for worksheet {worksheet_name}"
-        print(f"ERROR: {error_message}")
-        return {
-            "marks": 0,
-            "total_questions": total_questions,
-            "evaluated_entries": entries,
-            "error": error_message
-        }
+        return None, f"No expected answers found for worksheet {worksheet_name}"
     
     expected_answers = EXPECTED_ANSWERS[worksheet_range].get(worksheet_name, [])
     
     if not expected_answers:
-        error_message = f"No expected answers found for worksheet {worksheet_name} in range {worksheet_range}"
-        print(f"ERROR: {error_message}")
-        return {
-            "marks": 0,
-            "total_questions": total_questions,
-            "evaluated_entries": entries,
-            "error": error_message
-        }
+        return None, f"No expected answers found for worksheet {worksheet_name} in range {worksheet_range}"
     
-    print(f"Found {len(expected_answers)} expected answers for worksheet {worksheet_name}")
-    
-    entries_by_id = {}
-    for entry in entries:
-        question_id = entry['question_id'].lower().strip()
-        numeric_id = ''.join(filter(str.isdigit, question_id))
-        if numeric_id:
-            try:
-                idx = int(numeric_id) - 1
-                entries_by_id[idx] = entry
-            except ValueError as e:
-                print(f"ERROR parsing numeric ID from {question_id}: {e}")
-    
-    actual_question_count = len(expected_answers)
-    
-    correct_answers = 0
-    for i, expected in enumerate(expected_answers):
-        if i in entries_by_id:
-            entry = entries_by_id[i]
-            expected_answer = expected.get('answer', '')
-            student_answer = entry['answer'].strip()
-            
-            is_correct = student_answer == expected_answer
-            
-            print(f"Q{i+1}: Student: '{student_answer}' vs Expected: '{expected_answer}' => {is_correct}")
-            
-            if is_correct:
-                correct_answers += 1
-            
-            evaluated_entry = entry.copy()
-            evaluated_entry['expected_answer'] = expected_answer
-            evaluated_entry['is_correct'] = is_correct
-            evaluated_entries.append(evaluated_entry)
-        else:
-            print(f"Q{i+1}: Missing student answer, expected: '{expected.get('answer', '')}'")
-            evaluated_entries.append({
-                'question_id': f'q{i+1}',
-                'question': f'Question {i+1}',
-                'answer': '',
-                'expected_answer': expected.get('answer', ''),
-                'is_correct': False
-            })
-    
-    if actual_question_count > 0:
-        marks = round((correct_answers / actual_question_count) * total_questions)
-    
-    print(f"Raw score: {correct_answers}/{actual_question_count}")
-    print(f"Final score (out of 40): {marks}/{total_questions}")
-    
-    return {
-        "marks": marks,
-        "total_questions": total_questions,
-        "evaluated_entries": evaluated_entries,
-        "error": error_message
-    }
+    return expected_answers, None
 
-async def process_stud_worksheets(token_no, worksheet_name, file):
+async def process_student_worksheet(token_no, worksheet_name, file):
+    """Process a single student worksheet using Gemini 2.5 Flash"""
     try:
+        # Create temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as temp:
             shutil.copyfileobj(file.file, temp)
             temp_path = temp.name
         
+        # Upload to S3
         s3_url = await asyncio.get_event_loop().run_in_executor(
             executor, upload_to_s3, temp_path
         )
@@ -146,67 +77,105 @@ async def process_stud_worksheets(token_no, worksheet_name, file):
         if not s3_url:
             raise Exception(f"Failed to upload image to S3: {file.filename}")
         
+        # Read image bytes
         with open(temp_path, "rb") as image_file:
             image_bytes = image_file.read()
         
-        gr_response = await asyncio.get_event_loop().run_in_executor(
-            executor, use_groq, image_bytes
+        # Use Gemini for OCR
+        print(f"Processing {file.filename} with Gemini OCR...")
+        ocr_response = await asyncio.get_event_loop().run_in_executor(
+            executor, use_gemini_for_ocr, image_bytes
         )
         
-        if "error" in gr_response:
+        if "error" in ocr_response:
             os.unlink(temp_path)
-            return {"filename": file.filename, "error": gr_response["error"], "success": False}
+            return {"filename": file.filename, "error": ocr_response["error"], "success": False}
         
-        entries = extract_entries_from_response(gr_response)
+        # Extract entries from OCR response
+        student_entries = extract_entries_from_response(ocr_response)
         
-        evaluation_result = evaluate_answers(worksheet_name, entries)
+        if not student_entries:
+            os.unlink(temp_path)
+            return {"filename": file.filename, "error": "No questions extracted from image", "success": False}
         
+        # Find expected answers
+        expected_answers, error_msg = find_expected_answers(worksheet_name)
+        
+        if expected_answers is None:
+            os.unlink(temp_path)
+            return {"filename": file.filename, "error": error_msg, "success": False}
+        
+        # Use Gemini for intelligent scoring
+        print(f"Scoring {file.filename} with Gemini AI...")
+        scoring_result = await asyncio.get_event_loop().run_in_executor(
+            executor, use_gemini_for_scoring, student_entries, expected_answers, worksheet_name
+        )
+        
+        if "error" in scoring_result:
+            os.unlink(temp_path)
+            return {"filename": file.filename, "error": scoring_result["error"], "success": False}
+        
+        # Save results to MongoDB
+        mongodb_id = await asyncio.get_event_loop().run_in_executor(
+            executor, save_results_to_mongo, token_no, worksheet_name, scoring_result, s3_url, file.filename
+        )
+        
+        # Clean up temp file
         os.unlink(temp_path)
         
+        # Prepare response
         result = {
             "filename": file.filename,
             "worksheet_name": worksheet_name,
+            "token_no": token_no,
             "s3_url": s3_url,
-            "entries_count": len(entries),
-            "marks": evaluation_result["marks"],
-            "total_questions": 40,
-            "success": True
+            "mongodb_id": mongodb_id,
+            "overall_score": (scoring_result.get("overall_score", 0)/scoring_result.get("total_possible")*40),
+            "total_possible": scoring_result.get("total_possible", 40),
+            "entries_count": len(student_entries),
+            "question_scores": scoring_result.get("question_scores", []),
+            "success": True,
+            "processed_with": "gemini-2.5-flash"
         }
         
-        if evaluation_result["marks"] == 0:
-            result["zero_marks_reason"] = evaluation_result.get("error") or "None of the answers matched the expected answers"
-            if "error" not in evaluation_result:
-                incorrect_answers = [
-                    f"Q{idx+1}: answered '{entry.get('answer', '')}' instead of '{entry.get('expected_answer', '')}'"
-                    for idx, entry in enumerate(evaluation_result["evaluated_entries"])
-                    if not entry.get("is_correct", False) and entry.get("answer", "").strip() != ""
-                ]
-                unanswered = sum(1 for entry in evaluation_result["evaluated_entries"] 
-                                if entry.get("answer", "").strip() == "")
-                
-                diagnostics = []
-                if incorrect_answers:
-                    diagnostics.append(f"Incorrect answers: {', '.join(incorrect_answers[:5])}")
-                    if len(incorrect_answers) > 5:
-                        diagnostics.append(f"...and {len(incorrect_answers)-5} more")
-                
-                if unanswered > 0:
-                    diagnostics.append(f"Unanswered questions: {unanswered}")
-                
-                if diagnostics:
-                    result["zero_marks_diagnostics"] = diagnostics
+        # Add diagnostics for zero scores
+        if scoring_result.get("overall_score", 0) == 0:
+            incorrect_answers = []
+            unanswered = 0
+            
+            for score_entry in scoring_result.get("question_scores", []):
+                if not score_entry.get("is_correct", False):
+                    if score_entry.get("student_answer", "").strip() == "":
+                        unanswered += 1
+                    else:
+                        incorrect_answers.append(
+                            f"Q{score_entry.get('question_number', '?')}: answered '{score_entry.get('student_answer', '')}' instead of '{score_entry.get('expected_answer', '')}'"
+                        )
+            
+            diagnostics = []
+            if incorrect_answers:
+                diagnostics.append(f"Incorrect answers: {', '.join(incorrect_answers[:5])}")
+                if len(incorrect_answers) > 5:
+                    diagnostics.append(f"...and {len(incorrect_answers)-5} more")
+            
+            if unanswered > 0:
+                diagnostics.append(f"Unanswered questions: {unanswered}")
+            
+            if diagnostics:
+                result["zero_marks_diagnostics"] = diagnostics
         
         return result
             
     except Exception as e:
         try:
             os.unlink(temp_path)
-        except:
+        except: 
             pass
         return {"filename": file.filename, "error": str(e), "success": False}
 
 @app.post("/process-worksheets")
 async def process_worksheets(token_no: str, worksheet_name: str, files: List[UploadFile] = File(...)):
+    """Process multiple student worksheets using Gemini 2.5 Flash for OCR and scoring"""
     if not files:
         raise HTTPException(status_code=400, detail="No files were uploaded")
     
@@ -216,19 +185,27 @@ async def process_worksheets(token_no: str, worksheet_name: str, files: List[Upl
     if not worksheet_name:
         raise HTTPException(status_code=400, detail="worksheet_name is required")
     
-    tasks = [process_stud_worksheets(token_no, worksheet_name, file) for file in files]
+    print(f"Processing {len(files)} worksheets for token {token_no}, worksheet {worksheet_name}")
+    
+    # Process all files in parallel
+    tasks = [process_student_worksheet(token_no, worksheet_name, file) for file in files]
     results = await asyncio.gather(*tasks)
     
+    # Separate successful and failed results
     processed = [r for r in results if r.get("success", False)]
     errors = [r for r in results if not r.get("success", False)]
     
-    for r in processed:
+    # Clean up success flag from response
+    for r in processed: 
         r.pop("success", None)
     
     return {
         "success": len(processed) > 0,
+        "processed_count": len(processed),
+        "error_count": len(errors),
         "processed": processed,
-        "errors": errors
+        "errors": errors,
+        "model_used": "gemini-2.5-flash"
     }
 
 if __name__ == "__main__":
