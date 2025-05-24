@@ -2,14 +2,13 @@ import os
 import json
 from conns import s3_client, gemini_client, collection
 from google.genai import types
-from datetime import datetime
+from datetime import datetime, timedelta
 from PIL import Image
 import io
 
 S3_BUCKET_NAME = "learno-pdf-document"
 
 def upload_to_s3(file_path):
-    """Upload file to S3 and return public URL"""
     try:
         file_name = os.path.basename(file_path)
         s3_key = f"worksheets-{file_name}"
@@ -37,7 +36,6 @@ def use_gemini_for_ocr(image_bytes_list):
         for image_bytes in image_bytes_list:
             image = Image.open(io.BytesIO(image_bytes))
             
-            # Convert to RGB if needed
             if image.mode != 'RGB':
                 image = image.convert('RGB')
             
@@ -70,7 +68,6 @@ def use_gemini_for_ocr(image_bytes_list):
             }
             """
         
-        # Prepare content array with prompt and all images
         contents = [ocr_prompt]
         for image_data in processed_images:
             contents.append(types.Part.from_bytes(data=image_data, mime_type='image/jpeg'))
@@ -82,13 +79,13 @@ def use_gemini_for_ocr(image_bytes_list):
         )
         
         response_text = response.text.strip()
+        print(response_text)
         
         if response_text.startswith('```json'):
             response_text = response_text[7:]
         if response_text.endswith('```'):
             response_text = response_text[:-3]
         
-        # Parse JSON
         result = json.loads(response_text)
         print(f"Gemini OCR extracted {len(result)} questions")
         return result
@@ -102,14 +99,7 @@ def use_gemini_for_ocr(image_bytes_list):
         return {"error": f"Gemini OCR error: {str(e)}"}
 
 def use_gemini_for_scoring(student_entries, expected_answers, worksheet_name):
-    """
-    Use Gemini 2.5 Flash to intelligently score student answers against expected answers
-    
-    This function can handle student entries combined from multiple images of the same worksheet.
-    It will consolidate all extracted questions and answers before scoring them against the expected answers.
-    """
     try:
-        # Prepare data for scoring
         student_data = []
         for entry in student_entries:
             student_data.append({
@@ -125,7 +115,6 @@ def use_gemini_for_scoring(student_entries, expected_answers, worksheet_name):
                 "question": expected.get("question", ""),
                 "expected_answer": expected.get("answer", "")
             })
-          # Add information about the number of entries and possible multi-image source
         multi_image_info = "The student entries below may have been extracted from multiple images of the same worksheet."
         
         scoring_prompt = f"""
@@ -160,29 +149,25 @@ def use_gemini_for_scoring(student_entries, expected_answers, worksheet_name):
                     "student_answer": "<student's answer>",
                     "expected_answer": "<expected answer>",
                     "points_earned": <0 or 1>,
-                    "points_possible": 1,
                     "is_correct": true/false,
-                    "feedback": "<brief explanation>"
                     }}
                 ]
                 }}
                 """
         
-        # Generate scoring using Gemini
         response = gemini_client.models.generate_content(
-            model='gemini-2.5-flash-preview-05-20',
+            model='gemini-2.0-flash',
             contents=scoring_prompt
         )
         response_text = response.text.strip()
         
-        # Clean up response
         if response_text.startswith('```json'):
             response_text = response_text[7:]
         if response_text.endswith('```'):
             response_text = response_text[:-3]
         
         result = json.loads(response_text)
-        print(f"Gemini scoring completed. Score: {result.get('overall_score', 0)}/{result.get('total_possible', len(expected_answers))}")
+        print(f"Scoring Completed")
         return result
         
     except json.JSONDecodeError as e:
@@ -194,13 +179,7 @@ def use_gemini_for_scoring(student_entries, expected_answers, worksheet_name):
         return {"error": f"Gemini scoring error: {str(e)}"}
 
 def save_results_to_mongo(token_no, worksheet_name, scoring_result, s3_url, filename):
-    """
-    Save the scoring results to MongoDB and return the document ID
-    
-    For multi-image worksheets, s3_url contains semicolon-separated URLs and
-    filename contains comma-separated filenames.
-    """
-    try:        # Parse multiple S3 URLs if present
+    try:
         s3_urls = s3_url.split(';')
         filenames = filename.split(', ')
         
@@ -211,18 +190,16 @@ def save_results_to_mongo(token_no, worksheet_name, scoring_result, s3_url, file
             "s3_url": s3_url,
             "s3_urls": s3_urls,
             "image_count": len(s3_urls),
-            "is_multi_image": len(s3_urls) > 1,
             "filenames": filenames,
             "overall_score": scoring_result.get("overall_score", 0),
             "total_possible": scoring_result.get("total_possible", 40),
             "question_scores": scoring_result.get("question_scores", []),
-            "timestamp": datetime.utcnow(),
+            "timestamp": (datetime.utcnow()+ timedelta(hours=5, minutes=30)).isoformat(),
             "processed_with": "gemini-2.5-flash"
         }
         
-        # Insert into MongoDB
         result = collection.insert_one(document)
-        print(f"Saved results to MongoDB with ID: {result.inserted_id}")
+        print(f"Saved to mongo: {result.inserted_id}")
         return str(result.inserted_id)
         
     except Exception as e:
@@ -230,14 +207,10 @@ def save_results_to_mongo(token_no, worksheet_name, scoring_result, s3_url, file
         return None
 
 def extract_entries_from_response(response_data):
-    """
-    Extract entries from Gemini OCR response and convert to expected format
-    """
     entries = []
     
     if isinstance(response_data, dict):
         for key, value in response_data.items():
-            # Skip non-question keys and ensure we have the right structure
             if (not key.startswith('_') and 
                 isinstance(value, dict) and 
                 'question' in value and 
@@ -253,19 +226,8 @@ def extract_entries_from_response(response_data):
     return entries
 
 def deduplicate_student_entries(all_entries):
-    """
-    Deduplicate student entries from multiple images
-    
-    When processing multiple images of the same worksheet, we might get
-    duplicate questions. This function keeps the best answer for each question.
-    
-    A 'better' answer is one that is non-empty when compared to an empty answer.
-    If both answers are non-empty, we keep the longer one as it likely contains more information.
-    """
-    # Group entries by question text (normalized)
     question_groups = {}
     for entry in all_entries:
-        # Normalize question text for comparison (lowercase, trim, remove extra spaces)
         norm_question = ' '.join(entry['question'].lower().strip().split())
         
         if norm_question not in question_groups:
@@ -273,26 +235,20 @@ def deduplicate_student_entries(all_entries):
         
         question_groups[norm_question].append(entry)
     
-    # For each group, select the best entry
     deduplicated = []
-    for question, entries in question_groups.items():
+    for _, entries in question_groups.items():
         if len(entries) == 1:
-            # Only one entry for this question
             deduplicated.append(entries[0])
         else:
-            # Multiple entries - choose the best answer
             best_entry = entries[0]
             for entry in entries[1:]:
-                # If current best is empty but this one isn't
                 if not best_entry['answer'].strip() and entry['answer'].strip():
                     best_entry = entry
-                # Both have answers, prefer the longer one
                 elif (best_entry['answer'].strip() and entry['answer'].strip() and 
                       len(entry['answer']) > len(best_entry['answer'])):
                     best_entry = entry
             
             deduplicated.append(best_entry)
     
-    print(f"Deduplicated {len(all_entries)} entries to {len(deduplicated)} unique questions")
     return deduplicated
 

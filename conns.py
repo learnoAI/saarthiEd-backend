@@ -19,5 +19,5 @@ s3_client = boto3.client(
     aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY")
 )
 
-# Google Gemini connection
+# Gemini connection
 gemini_client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
