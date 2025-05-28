@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 import os
 import boto3
 from google import genai
+from groq import Groq
 
 load_dotenv()
 
@@ -10,6 +11,7 @@ load_dotenv()
 mongo_client = MongoClient(os.getenv("MONGO_URI"))
 db = mongo_client["saarthiEd"]
 collection = db["worksheets"]
+qacollection = db["QAworksheets"]
 
 # AWS S3 connection
 s3_client = boto3.client(
@@ -21,3 +23,6 @@ s3_client = boto3.client(
 
 # Gemini connection
 gemini_client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+
+# Groq Client
+groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))

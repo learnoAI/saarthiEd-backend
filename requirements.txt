@@ -6,3 +6,4 @@ python-dotenv
 google-genai>=0.4.0
 python-multipart
 Pillow
+groq==0.22.0
