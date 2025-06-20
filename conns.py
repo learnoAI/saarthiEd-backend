@@ -12,6 +12,7 @@ mongo_client = MongoClient(os.getenv("MONGO_URI"))
 db = mongo_client["saarthiEd"]
 collection = db["worksheets"]
 qacollection = db["QAworksheets"]
+qacomments_collection = db["QAcomments"]
 
 # AWS S3 connection
 s3_client = boto3.client(
