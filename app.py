@@ -4,8 +4,8 @@ from typing import List
 import os
 import tempfile
 import shutil
-from utils import (use_gemini_for_ocr, use_gemini_for_scoring, save_results_to_mongo, 
-                  upload_to_s3, extract_entries_from_response, deduplicate_student_entries)
+from utils import (use_gemini_for_direct_grading, save_results_to_mongo, 
+                  upload_to_s3)
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -23,9 +23,6 @@ app.add_middleware(
 
 executor = ThreadPoolExecutor(max_workers=5)
 
-with open('Results/dataset_questions_answers.json', 'r') as f:
-    EXPECTED_ANSWERS = json.load(f)
-
 @app.get("/")
 async def root():
     return {"message": "SaarthiEd Python API is running with Gemini 2.5 Flash"}
@@ -34,28 +31,9 @@ async def root():
 async def healthcheck():
     return {"message": "ok", "model": "gemini-2.5-flash-preview-05-20"}
 
-def find_expected_answers(worksheet_name):
-    worksheet_range = None
-    for range_key in EXPECTED_ANSWERS.keys():
-        if worksheet_name in EXPECTED_ANSWERS[range_key]:
-            worksheet_range = range_key
-            print(f"Found worksheet {worksheet_name} in range {range_key}")
-            break
-    
-    if worksheet_range is None:
-        return None, f"No expected answers found for worksheet {worksheet_name}"
-    
-    expected_answers = EXPECTED_ANSWERS[worksheet_range].get(worksheet_name, [])
-    
-    if not expected_answers:
-        return None, f"No expected answers found for worksheet {worksheet_name} in range {worksheet_range}"
-    
-    return expected_answers, None
-
 async def process_student_worksheet(token_no, worksheet_name, files):
     temp_paths = []
     s3_urls = []
-    all_student_entries = []
     combined_filenames = []
     
     try:
@@ -81,57 +59,21 @@ async def process_student_worksheet(token_no, worksheet_name, files):
                 image_bytes = image_file.read()
                 all_image_bytes.append(image_bytes)
         
-        ocr_response = await asyncio.get_event_loop().run_in_executor(
-            executor, use_gemini_for_ocr, all_image_bytes
+        # Use Gemini for direct grading (combines OCR and grading)
+        grading_result = await asyncio.get_event_loop().run_in_executor(
+            executor, use_gemini_for_direct_grading, all_image_bytes, worksheet_name
         )
         
-        if "error" in ocr_response:
+        if "error" in grading_result:
             for path in temp_paths:
                 try:
                     os.unlink(path)
                 except:
                     pass
-            return {"filename": ", ".join(combined_filenames), "error": ocr_response["error"], "success": False}
-        
-        student_entries = extract_entries_from_response(ocr_response)
-        all_student_entries.extend(student_entries)
-        
-        if not all_student_entries:
-            for path in temp_paths:
-                try:
-                    os.unlink(path)
-                except:
-                    pass
-            return {"filename": ", ".join(combined_filenames), "error": "No questions extracted from images", "success": False}
-        
-        if len(files) > 1:
-            print(f"Deduplicating {len(all_student_entries)} entries from {len(files)} images")
-            all_student_entries = deduplicate_student_entries(all_student_entries)
-        
-        expected_answers, error_msg = find_expected_answers(worksheet_name)
-        
-        if expected_answers is None:
-            for path in temp_paths:
-                try:
-                    os.unlink(path)
-                except:
-                    pass
-            return {"filename": ", ".join(combined_filenames), "error": error_msg, "success": False}
-        
-        scoring_result = await asyncio.get_event_loop().run_in_executor(
-            executor, use_gemini_for_scoring, all_student_entries, expected_answers, worksheet_name
-        )
-        
-        if "error" in scoring_result:
-            for path in temp_paths:
-                try:
-                    os.unlink(path)
-                except:
-                    pass
-            return {"filename": ", ".join(combined_filenames), "error": scoring_result["error"], "success": False}
+            return {"filename": ", ".join(combined_filenames), "error": grading_result["error"], "success": False}
         
         mongodb_id = await asyncio.get_event_loop().run_in_executor(
-            executor, save_results_to_mongo, token_no, worksheet_name, scoring_result, ";".join(s3_urls), ", ".join(combined_filenames)
+            executor, save_results_to_mongo, token_no, worksheet_name, grading_result, ";".join(s3_urls), ", ".join(combined_filenames)
         )
         
         for path in temp_paths:
@@ -145,8 +87,8 @@ async def process_student_worksheet(token_no, worksheet_name, files):
             "token_no": token_no,
             "worksheet_name": worksheet_name,
             "mongodb_id": mongodb_id,
-            "grade": (scoring_result.get("overall_score", 0)/scoring_result.get("total_possible")*40),
-        }
+            "grade": grading_result.get("overall_score", 0),
+       }
         
         return result
     

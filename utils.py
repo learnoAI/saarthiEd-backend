@@ -98,87 +98,93 @@ def use_gemini_for_ocr(image_bytes_list):
         print(f"Gemini OCR error: {str(e)}")
         return {"error": f"Gemini OCR error: {str(e)}"}
 
-def use_gemini_for_scoring(student_entries, expected_answers, worksheet_name):
+def use_gemini_for_direct_grading(image_bytes_list, worksheet_name):
+    import io
+    import json
+    from PIL import Image
     try:
-        student_data = []
-        for entry in student_entries:
-            student_data.append({
-                "question_id": entry.get("question_id", ""),
-                "question": entry.get("question", ""),
-                "student_answer": entry.get("answer", "").strip()
-            })
-        
-        expected_data = []
-        for i, expected in enumerate(expected_answers):
-            expected_data.append({
-                "question_number": i + 1,
-                "question": expected.get("question", ""),
-                "expected_answer": expected.get("answer", "")
-            })
-        multi_image_info = "The student entries below may have been extracted from multiple images of the same worksheet."
-        
-        scoring_prompt = f"""
-                You are an expert teacher grading student worksheets. Compare each student answer with the expected answer and provide detailed scoring.
+        if not isinstance(image_bytes_list, list):
+            image_bytes_list = [image_bytes_list]
+        processed_images = []
+        for image_bytes in image_bytes_list:
+            image = Image.open(io.BytesIO(image_bytes))
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            img_buffer = io.BytesIO()
+            image.save(img_buffer, format='JPEG', quality=95)
+            processed_images.append(img_buffer.getvalue())
 
-                Worksheet: {worksheet_name}
+        grading_prompt = f"""
+            You are a lenient and encouraging teacher grading student worksheets. Analyze the worksheet images and provide fair grading.
 
-                {multi_image_info}
+            Worksheet: {worksheet_name}
 
-                SCORING GUIDELINES:
-                1. Exact matches get 1 point
-                2. Mathematically equivalent answers get 1 point (e.g., 0.5 = 1/2, 2/4 = 0.5)
-                3. Minor spelling/formatting differences should be handled gracefully
-                4. Case-insensitive matching for text answers
-                5. Completely wrong answers get 0 points
-                6. Empty/unanswered questions get 0 points
-                7. Deduplicate any repeated questions from multiple images - use the best answer if a student answered the same question multiple times
+            INSTRUCTIONS:
+            1. Extract all questions and student answers from the images
+            2. These images may be parts of the same worksheet - treat them as one complete worksheet
+            3. Grade each question based on the correctness of the student's answer
+            4. Provide a final score out of 40 points total
+            5. Be LENIENT and ENCOURAGING in your grading - give students the benefit of the doubt
+            6. NO PARTIAL MARKING - each question is either correct (full points) or incorrect (0 points)
+            7. For handwriting exercises, accept answers that are reasonably legible even if not perfect
+            8. For math problems, accept answers that show the correct result even if methodology is slightly unclear
+            9. Focus on effort and understanding rather than perfect execution
 
-                Student Data:
-                {json.dumps(student_data, indent=2)}
+            GRADING CRITERIA:
+            - Correct or reasonably correct answers: Full points for that question
+            - Clearly incorrect or completely empty answers: 0 points
+            - When in doubt, give the student the benefit and award full points
+            - Be encouraging and supportive in your overall feedback
+            - Do not penalize minor handwriting imperfections or small errors
 
-                Expected Answers:
-                {json.dumps(expected_data, indent=2)}
-
-                Return a JSON response with this EXACT structure:
-                {{
-                "overall_score": <total_points_earned>,
-                "total_possible": {len(expected_answers)},
+            Return a JSON response with this EXACT structure:
+            {{
+                "overall_score": <total_points_earned_out_of_40>,
+                "total_possible": 40,
                 "question_scores": [
                     {{
-                    "question_number": 1,
-                    "student_answer": "<student's answer>",
-                    "expected_answer": "<expected answer>",
-                    "points_earned": <0 or 1>,
-                    "is_correct": true/false,
+                        "question_number": 1,
+                        "question": "<question_text>",
+                        "student_answer": "<student's answer>",
+                        "points_earned": <points_for_this_question>,
+                        "max_points": <maximum_points_for_this_question>,
+                        "is_correct": true/false
                     }}
-                ]
-                }}
-                """
-        
+                ],
+                "grade_percentage": <percentage_score>,
+                "overall_feedback": "<brief encouraging feedback on the overall worksheet performance>"
+            }}
+            """
+        from conns import gemini_client
+        from google.genai import types
+        contents = [grading_prompt]
+        for image_data in processed_images:
+            contents.append(types.Part.from_bytes(data=image_data, mime_type='image/jpeg'))
+        print(f"Sending {len(processed_images)} images to Gemini for direct grading...")
         response = gemini_client.models.generate_content(
-            model='gemini-2.0-flash',
-            contents=scoring_prompt
+            model='gemini-2.5-flash-preview-05-20',
+            contents=contents
         )
         response_text = response.text.strip()
-        
+        print(f"Gemini grading response received: {response_text[:200]}...")
+        # Remove code block formatting if present
         if response_text.startswith('```json'):
             response_text = response_text[7:]
         if response_text.endswith('```'):
             response_text = response_text[:-3]
-        
-        result = json.loads(response_text)
-        print(f"Scoring Completed")
-        return result
-        
-    except json.JSONDecodeError as e:
-        print(f"Scoring JSON decode error: {str(e)}")
-        print(f"Raw scoring response: {response.text}")
-        return {"error": f"Failed to parse scoring response as JSON: {str(e)}"}
+        try:
+            result = json.loads(response_text)
+            print(f"Direct grading completed - Score: {result.get('overall_score', 0)}/40")
+            return result
+        except json.JSONDecodeError as e:
+            print(f"Grading JSON decode error: {str(e)}")
+            print(f"Raw grading response: {response_text}")
+            return {"error": f"Failed to parse grading response as JSON: {str(e)}"}
     except Exception as e:
-        print(f"Gemini scoring error: {str(e)}")
-        return {"error": f"Gemini scoring error: {str(e)}"}
+        print(f"Gemini direct grading error: {str(e)}")
+        return {"error": f"Gemini direct grading error: {str(e)}"}
 
-def save_results_to_mongo(token_no, worksheet_name, scoring_result, s3_url, filename):
+def save_results_to_mongo(token_no, worksheet_name, grading_result, s3_url, filename):
     try:
         s3_urls = s3_url.split(';')
         filenames = filename.split(', ')
@@ -191,11 +197,13 @@ def save_results_to_mongo(token_no, worksheet_name, scoring_result, s3_url, file
             "s3_urls": s3_urls,
             "image_count": len(s3_urls),
             "filenames": filenames,
-            "overall_score": scoring_result.get("overall_score", 0),
-            "total_possible": scoring_result.get("total_possible", 40),
-            "question_scores": scoring_result.get("question_scores", []),
+            "overall_score": grading_result.get("overall_score", 0),
+            "total_possible": 40,
+            "grade_percentage": grading_result.get("grade_percentage", 0),
+            "question_scores": grading_result.get("question_scores", []),
+            "overall_feedback": grading_result.get("overall_feedback", ""),
             "timestamp": (datetime.utcnow()+ timedelta(hours=5, minutes=30)).isoformat(),
-            "processed_with": "gemini-2.5-flash"
+            "processed_with": "gemini-2.0-flash-direct-grading"
         }
         
         result = collection.insert_one(document)
