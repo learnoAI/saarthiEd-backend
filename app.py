@@ -4,11 +4,9 @@ from typing import List
 import os
 import tempfile
 import shutil
-from utils import (use_gemini_for_direct_grading, save_results_to_mongo, 
-                  upload_to_s3)
+from utils import use_gemini_for_direct_grading, save_results_to_mongo, upload_to_s3
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-import json
 import uvicorn 
 
 app = FastAPI()
@@ -25,11 +23,11 @@ executor = ThreadPoolExecutor(max_workers=5)
 
 @app.get("/")
 async def root():
-    return {"message": "SaarthiEd Python API is running with Gemini 2.5 Flash"}
+    return {"message": "Saarthi AI Score API is running"}
 
 @app.get("/healthcheck")
 async def healthcheck():
-    return {"message": "ok", "model": "gemini-2.5-flash-preview-05-20"}
+    return {"message": "ok"}
 
 async def process_student_worksheet(token_no, worksheet_name, files):
     temp_paths = []
@@ -88,6 +86,17 @@ async def process_student_worksheet(token_no, worksheet_name, files):
             "worksheet_name": worksheet_name,
             "mongodb_id": mongodb_id,
             "grade": grading_result.get("overall_score", 0),
+            "total_possible": 40,
+            "grade_percentage": grading_result.get("grade_percentage", 0),
+            "total_questions": grading_result.get("total_questions", 0),
+            "correct_answers": grading_result.get("correct_answers", 0),
+            "wrong_answers": grading_result.get("wrong_answers", 0),
+            "unanswered": grading_result.get("unanswered", 0),
+            "question_scores": grading_result.get("question_scores", []),
+            "wrong_questions": grading_result.get("wrong_questions", []),
+            "correct_questions": grading_result.get("correct_questions", []),
+            "unanswered_questions": grading_result.get("unanswered_questions", []),
+            "overall_feedback": grading_result.get("overall_feedback", "")
        }
         
         return result
