@@ -67,7 +67,7 @@ def use_groq(image_bytes):
                     ],
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "Return me the contents of this image. I am processing a document where students have to write the answer to the question. I need to extract the answer from the image along with the respective question in proper SINGLE LINE json format. DO not mess with the order of the questions. Follow this JSON format: {'q1':{'question':'<question>', 'answer':'<answer>'}, 'q2':{'question':'<question>', 'answer':'<answer>'}, ...}. Please do not add any extra text or explanation. Just return the JSON IN A SINGLE LINE NOTHING ELSE."},
+                        {"type": "text", "text": "Return me the contents of this image. I am processing a document where students have to write the answer to the question. I need to extract the answer from the image along with the respective question in proper SINGLE LINE json format. Follow this JSON format: {'q1':{'question':'<question>', 'answer':'<answer>'}, 'q2':{'question':'<question>', 'answer':'<answer>'}, ...}. Please do not add any extra text or explanation. Just return the JSON IN A SINGLE LINE NOTHING ELSE."},
                         {
                             "type": "image_url",
                             "image_url": {
@@ -178,7 +178,6 @@ def main(images, model):
         except Exception as e:
             errors.append({"image": image_path, "error": str(e), "index": i})
     
-    # Save ws
     if mongo_documents:
         qacollection.insert_many(mongo_documents)
         print(f"Inserted {len(mongo_documents)} worksheet documents into MongoDB")
@@ -192,6 +191,3 @@ def main(images, model):
 
 sw = os.listdir("sw")
 sw= [f"sw/{f}" for f in sw]
-
-# main(sw, model="maverick")
-# main(sw, model="gemini")
