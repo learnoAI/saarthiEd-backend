@@ -57,7 +57,6 @@ async def process_student_worksheet(token_no, worksheet_name, files):
                 image_bytes = image_file.read()
                 all_image_bytes.append(image_bytes)
         
-        # Use Gemini for direct grading (combines OCR and grading)
         grading_result = await asyncio.get_event_loop().run_in_executor(
             executor, use_gemini_for_direct_grading, all_image_bytes, worksheet_name
         )

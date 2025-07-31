@@ -52,6 +52,12 @@ If a question is unanswered, use an empty string "" for the answer.
 Include both the question text and the student's answer.
 Number questions sequentially starting from q1.
 
+<Rules>
+1. When giving the student's answer, give exactly what they wrote. DO NOT INTERPRET. Remember that the student's future depends on the correctness of your interpretation.
+2. Students often make 7s looks 1s and vice versa, so if you are confused, give the student the benefit of the doubt.
+3. Students often make 9s look like 1s and vice versa, so if you are confused, give the student the benefit of the doubt.
+</Rules>   
+
 Return format:
 {
 "q1": {"question": "<question_text>", "answer": "<student_answer_exactly_as_written>"},
@@ -275,7 +281,6 @@ Please grade each answer and provide a score out of 40 total points (distribute 
 For each question, evaluate:
 1. Correctness of the answer
 2. Effort shown by the student
-3. Partial credit for partially correct answers
         
 {questions_text}
         
@@ -301,9 +306,9 @@ IMPORTANT: Return your response in the following JSON format:
     "unanswered": <number_of_unanswered_questions>,
     "overall_feedback": "<encouraging_feedback_for_student>"
 }}
-        
-Be fair but encouraging in your grading. Give partial credit where appropriate."""
-        
+
+     
+        """
         print("Sending questions to Gemini for grading...")
         response = gemini_client.models.generate_content(
             model='gemini-2.5-flash-preview-05-20',
