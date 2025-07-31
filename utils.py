@@ -1,13 +1,23 @@
 import os
 import json
 import re
+from typing import List
 from conns import s3_client, gemini_client, collection
 from google.genai import types
 from datetime import datetime, timedelta
 from PIL import Image
 import io
+from pydantic import BaseModel, Field
 
 S3_BUCKET_NAME = "learno-pdf-document"
+
+class ExtractedQuestion(BaseModel):
+    question_number: int = Field(description="The unique identifier for the question")
+    question: str = Field(description="The entire text of the question without the student's answer. Do not confuse questions on different columns.")
+    student_answer: str = Field(description="The student's answer to the question - the exact answer as written by the student and not necessarily the correct answer")
+
+class ExtractedQuestions(BaseModel):
+    questions: List[ExtractedQuestion] = Field(description="The list of questions and their corresponding student answers")
 
 def upload_to_s3(file_path):
     try:
@@ -45,24 +55,21 @@ def use_gemini_for_ocr(image_bytes_list):
             processed_images.append(img_buffer.getvalue())
         
         ocr_prompt = """Extract all questions and their corresponding student answers from these worksheet images. 
-Return the data in JSON format where each question is keyed as "q1", "q2", etc.
-
-Extract the student's answers EXACTLY as written - do not correct or modify them.
-If a question is unanswered, use an empty string "" for the answer.
-Include both the question text and the student's answer.
-Number questions sequentially starting from q1.
 
 <Rules>
 1. When giving the student's answer, give exactly what they wrote. DO NOT INTERPRET. Remember that the student's future depends on the correctness of your interpretation.
-2. Students often make 7s looks 1s and vice versa, so if you are confused, give the student the benefit of the doubt.
-3. Students often make 9s look like 1s and vice versa, so if you are confused, give the student the benefit of the doubt.
+2. If a question is unanswered, use an empty string "" for the answer.
+3. There may be two reasonable interpretations for a student's answer. For instance, students may write something which could be interpreted as 1 or 7. Give the one which is most likely.
+4. There are a total of 40 questions in the worksheet.
+5. Return the questions in the order of question number.
+6. Some sheets have multiple columns of questions. Don't confuse questions on different columns.
+7. Include the entire question text in the question field - do not miss anything. Do not include the student's answer in the question field.
 </Rules>   
 
-Return format:
-{
-"q1": {"question": "<question_text>", "answer": "<student_answer_exactly_as_written>"},
-"q2": {"question": "<question_text>", "answer": "<student_answer_exactly_as_written>"}
-}"""
+Respond in the following JSON format:
+{format_instructions}
+
+"""
         
         contents = [ocr_prompt]
         for image_data in processed_images:
@@ -70,20 +77,18 @@ Return format:
             
         print(f"Sending {len(processed_images)} images to Gemini OCR in a single request...")
         response = gemini_client.models.generate_content(
-            model='gemini-2.5-flash-preview-05-20',
-            contents=contents
+            model='gemini-2.5-flash',
+            contents=contents,
+            config=types.GenerateContentConfig(
+                response_mime_type='application/json',
+                response_schema=ExtractedQuestions,
+                temperature=0.0
+            )
+            
         )
         
-        response_text = response.text.strip()
-        print(response_text)
-        
-        if response_text.startswith('```json'):
-            response_text = response_text[7:]
-        if response_text.endswith('```'):
-            response_text = response_text[:-3]
-        
-        result = json.loads(response_text)
-        print(f"Gemini OCR extracted {len(result)} questions")
+        result = response.parsed
+        print(result)
         return result
         
     except json.JSONDecodeError as e:
@@ -189,10 +194,10 @@ def grade_student_answers(student_answers, correct_answers, total_questions):
     
     points_per_question = 40 / total_questions if total_questions > 0 else 0
     
-    for i, (question_id, question_data) in enumerate(student_answers.items()):
-        question_number = i + 1
-        student_answer = question_data.get('answer', '').strip()
-        question_text = question_data.get('question', '')
+    for i, question in enumerate(student_answers.questions):
+        question_number = question.question_number
+        student_answer = question.student_answer
+        question_text = question.question
         
         correct_answer = None
         if i < len(correct_answers):
