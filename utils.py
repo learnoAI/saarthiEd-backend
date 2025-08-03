@@ -55,7 +55,7 @@ def _process_image_for_ocr(image_bytes: bytes) -> bytes:
         rgb_image.save(img_buffer, format='JPEG', quality=95, optimize=True)
         return img_buffer.getvalue()
 
-def use_gemini_for_ocr(image_bytes_list: List[bytes]) -> Dict[str, Any]:
+def use_gemini_for_ocr(image_bytes_list: List[bytes], worksheet_name: str = None) -> Dict[str, Any]:
     try:
         if not isinstance(image_bytes_list, list):
             image_bytes_list = [image_bytes_list]
@@ -63,7 +63,29 @@ def use_gemini_for_ocr(image_bytes_list: List[bytes]) -> Dict[str, Any]:
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             processed_images = list(executor.map(_process_image_for_ocr, image_bytes_list))
         
-        ocr_prompt = """Extract all questions and their corresponding student answers from these worksheet images. 
+        ocr_prompt = None
+        if worksheet_name:
+            worksheet_number = None
+            if worksheet_name.strip().isdigit():
+                worksheet_number = worksheet_name.strip()
+            else:
+                import re
+                numbers = re.findall(r'\d+', worksheet_name)
+                if numbers:
+                    worksheet_number = numbers[-1]
+            
+            if worksheet_number:
+                prompt_file_path = Path(__file__).parent / 'context' / 'prompts' / f'{worksheet_number}.txt'
+                if prompt_file_path.exists():
+                    try:
+                        with prompt_file_path.open('r', encoding='utf-8') as f:
+                            ocr_prompt = f.read()
+                        print(f"Using custom OCR prompt for worksheet {worksheet_number}")
+                    except Exception as e:
+                        print(f"Error loading custom prompt for worksheet {worksheet_number}: {str(e)}")
+        
+        if not ocr_prompt:
+            ocr_prompt = """Extract all questions and their corresponding student answers from these worksheet images. 
 
 <Rules>
 1. When giving the student's answer, give exactly what they wrote. DO NOT INTERPRET. Remember that the student's future depends on the correctness of your interpretation.
@@ -392,7 +414,7 @@ IMPORTANT: Return your response in the following JSON format:
 def use_gemini_for_direct_grading(image_bytes_list: List[bytes], worksheet_name: str) -> Dict[str, Any]:
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            ocr_future = executor.submit(use_gemini_for_ocr, image_bytes_list)
+            ocr_future = executor.submit(use_gemini_for_ocr, image_bytes_list, worksheet_name)
             book_data_future = executor.submit(load_book_worksheets_data)
             
             ocr_result = ocr_future.result()
