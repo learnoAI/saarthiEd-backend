@@ -1,13 +1,16 @@
 import os
 import json
 import re
-from typing import List
+from typing import List, Dict, Any, Optional, Tuple
 from conns import s3_client, gemini_client, collection
 from google.genai import types
 from datetime import datetime, timedelta
 from PIL import Image
 import io
 from pydantic import BaseModel, Field
+from functools import lru_cache
+import concurrent.futures
+from pathlib import Path
 
 S3_BUCKET_NAME = "learno-pdf-document"
 
@@ -19,12 +22,14 @@ class ExtractedQuestion(BaseModel):
 class ExtractedQuestions(BaseModel):
     questions: List[ExtractedQuestion] = Field(description="The list of questions and their corresponding student answers")
 
-def upload_to_s3(file_path):
+def upload_to_s3(file_path: str) -> Optional[str]:
+    """Upload file to S3 with optimized buffer size"""
     try:
-        file_name = os.path.basename(file_path)
+        file_name = Path(file_path).name
         s3_key = f"worksheets-{file_name}"
         
-        with open(file_path, 'rb') as file_data:
+        # Use larger buffer for better I/O performance
+        with open(file_path, 'rb', buffering=8192) as file_data:
             s3_client.upload_fileobj(
                 file_data, 
                 S3_BUCKET_NAME, 
@@ -32,27 +37,31 @@ def upload_to_s3(file_path):
                 ExtraArgs={'ACL': 'public-read'}
             )
         
-        s3_url = f"https://{S3_BUCKET_NAME}.s3.ap-south-1.amazonaws.com/{s3_key}"
-        return s3_url
+        return f"https://{S3_BUCKET_NAME}.s3.ap-south-1.amazonaws.com/{s3_key}"
     except Exception as e:
         print(f"Error uploading to S3: {str(e)}")
         return None
 
-def use_gemini_for_ocr(image_bytes_list):
+def _process_image_for_ocr(image_bytes: bytes) -> bytes:
+    with Image.open(io.BytesIO(image_bytes)) as image:
+        # Skip conversion if already RGB
+        if image.mode == 'RGB':
+            return image_bytes
+        
+        # Convert and optimize
+        rgb_image = image.convert('RGB')
+        img_buffer = io.BytesIO()
+        # Use optimize flag for smaller file size
+        rgb_image.save(img_buffer, format='JPEG', quality=95, optimize=True)
+        return img_buffer.getvalue()
+
+def use_gemini_for_ocr(image_bytes_list: List[bytes]) -> Dict[str, Any]:
     try:
         if not isinstance(image_bytes_list, list):
             image_bytes_list = [image_bytes_list]
         
-        processed_images = []
-        for image_bytes in image_bytes_list:
-            image = Image.open(io.BytesIO(image_bytes))
-            
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-            
-            img_buffer = io.BytesIO()
-            image.save(img_buffer, format='JPEG', quality=95)
-            processed_images.append(img_buffer.getvalue())
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            processed_images = list(executor.map(_process_image_for_ocr, image_bytes_list))
         
         ocr_prompt = """Extract all questions and their corresponding student answers from these worksheet images. 
 
@@ -99,19 +108,21 @@ Respond in the following JSON format:
         print(f"Gemini OCR error: {str(e)}")
         return {"error": f"Gemini OCR error: {str(e)}"}
 
-def load_book_worksheets_data():
+@lru_cache(maxsize=1)
+def load_book_worksheets_data() -> Optional[Dict[str, Any]]:
     try:
-        book_worksheets_path = os.path.join(os.path.dirname(__file__), 'Results', 'book_worksheets.json')
-        with open(book_worksheets_path, 'r') as f:
+        book_worksheets_path = Path(__file__).parent / 'Results' / 'book_worksheets.json'
+        with book_worksheets_path.open('r') as f:
             return json.load(f)
     except Exception as e:
         print(f"Error loading book worksheets data: {str(e)}")
         return None
 
-def compare_answers_with_book_data(student_answers, worksheet_name, book_worksheets_data):
+_WORKSHEET_NUMBER_PATTERN = re.compile(r'\d+')
+_BOOK_WORKSHEET_PATTERN = re.compile(r'^\d+[-_]\d+$')
+
+def compare_answers_with_book_data(student_answers: ExtractedQuestions, worksheet_name: str, book_worksheets_data: Dict[str, Any]) -> Tuple[Optional[List], Optional[int]]:
     try:
-        import re
-        
         book_number = None
         worksheet_number = None
         worksheet_name_clean = worksheet_name.strip()
@@ -123,7 +134,7 @@ def compare_answers_with_book_data(student_answers, worksheet_name, book_workshe
                     book_number = book_id
                     break
         elif 'book' in worksheet_name_clean.lower() and 'worksheet' in worksheet_name_clean.lower():
-            numbers = re.findall(r'\d+', worksheet_name_clean)
+            numbers = _WORKSHEET_NUMBER_PATTERN.findall(worksheet_name_clean)
             if len(numbers) >= 2:
                 book_number = numbers[0]
                 worksheet_number = numbers[1]
@@ -133,13 +144,13 @@ def compare_answers_with_book_data(student_answers, worksheet_name, book_workshe
                     if worksheet_number in book_data.get('worksheets', {}):
                         book_number = book_id
                         break
-        elif re.match(r'^\d+[-_]\d+$', worksheet_name_clean):
-            numbers = re.findall(r'\d+', worksheet_name_clean)
+        elif _BOOK_WORKSHEET_PATTERN.match(worksheet_name_clean):
+            numbers = _WORKSHEET_NUMBER_PATTERN.findall(worksheet_name_clean)
             if len(numbers) == 2:
                 book_number = numbers[0]
                 worksheet_number = numbers[1]
         elif 'worksheet' in worksheet_name_clean.lower():
-            numbers = re.findall(r'\d+', worksheet_name_clean)
+            numbers = _WORKSHEET_NUMBER_PATTERN.findall(worksheet_name_clean)
             if numbers:
                 worksheet_number = numbers[0]
                 for book_id, book_data in book_worksheets_data.get('books', {}).items():
@@ -147,7 +158,7 @@ def compare_answers_with_book_data(student_answers, worksheet_name, book_workshe
                         book_number = book_id
                         break
         else:
-            numbers = re.findall(r'\d+', worksheet_name_clean)
+            numbers = _WORKSHEET_NUMBER_PATTERN.findall(worksheet_name_clean)
             if numbers:
                 for num in sorted(numbers, key=int, reverse=True):
                     for book_id, book_data in book_worksheets_data.get('books', {}).items():
@@ -185,7 +196,7 @@ def compare_answers_with_book_data(student_answers, worksheet_name, book_workshe
         print(f"Error comparing answers: {str(e)}")
         return None, None
 
-def grade_student_answers(student_answers, correct_answers, total_questions):
+def grade_student_answers(student_answers: ExtractedQuestions, correct_answers: List[str], total_questions: int) -> Dict[str, Any]:
     question_scores = []
     wrong_questions = []
     correct_questions = []
@@ -203,20 +214,26 @@ def grade_student_answers(student_answers, correct_answers, total_questions):
         if i < len(correct_answers):
             correct_answer = str(correct_answers[i]).strip()
         
+        # Optimized comparison logic
         is_correct = False
         if correct_answer and student_answer:
+            # Normalize once
             normalized_student = student_answer.lower().replace(' ', '')
             normalized_correct = correct_answer.lower().replace(' ', '')
             
+            # Quick string comparison first
             if normalized_student == normalized_correct:
                 is_correct = True
-            elif normalized_student.replace('.', '').replace('-', '').isdigit() and \
-                 normalized_correct.replace('.', '').replace('-', '').isdigit():
-                try:
-                    if float(normalized_student) == float(normalized_correct):
-                        is_correct = True
-                except:
-                    pass
+            else:
+                # Check numeric only if needed
+                student_numeric = normalized_student.replace('.', '').replace('-', '')
+                correct_numeric = normalized_correct.replace('.', '').replace('-', '')
+                
+                if student_numeric.isdigit() and correct_numeric.isdigit():
+                    try:
+                        is_correct = float(normalized_student) == float(normalized_correct)
+                    except:
+                        pass
         
         points_earned = points_per_question if is_correct else 0
         if is_correct:
@@ -268,16 +285,18 @@ def grade_student_answers(student_answers, correct_answers, total_questions):
         "unanswered": len(unanswered_questions)
     }
 
-def use_gemini_for_grading_without_answers(ocr_result):
+def use_gemini_for_grading_without_answers(ocr_result: Dict[str, Any]) -> Dict[str, Any]:
     try:
-        questions_text = ""
+        # Build questions text more efficiently
+        questions_parts = []
         for i, (question_id, question_data) in enumerate(ocr_result.items()):
             question_number = i + 1
             question_text = question_data.get('question', '')
             student_answer = question_data.get('answer', '')
             
-            questions_text += f"Question {question_number}: {question_text}\n"
-            questions_text += f"Student Answer: {student_answer}\n\n"
+            questions_parts.append(f"Question {question_number}: {question_text}\nStudent Answer: {student_answer}\n")
+        
+        questions_text = '\n'.join(questions_parts)
         
         grading_prompt = f"""You are an expert teacher grading student worksheets. Below are the questions and student answers extracted from a worksheet.
         
@@ -316,7 +335,7 @@ IMPORTANT: Return your response in the following JSON format:
         """
         print("Sending questions to Gemini for grading...")
         response = gemini_client.models.generate_content(
-            model='gemini-2.5-flash-preview-05-20',
+            model='gemini-2.5-flash',
             contents=[grading_prompt]
         )
         
@@ -370,30 +389,29 @@ IMPORTANT: Return your response in the following JSON format:
         print(f"Error in Gemini grading: {str(e)}")
         return {"error": f"Gemini grading error: {str(e)}"}
 
-def use_gemini_for_direct_grading(image_bytes_list, worksheet_name):
+def use_gemini_for_direct_grading(image_bytes_list: List[bytes], worksheet_name: str) -> Dict[str, Any]:
     try:
-        print("Step 1: Extracting text using Gemini OCR...")
-        ocr_result = use_gemini_for_ocr(image_bytes_list)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            ocr_future = executor.submit(use_gemini_for_ocr, image_bytes_list)
+            book_data_future = executor.submit(load_book_worksheets_data)
+            
+            ocr_result = ocr_future.result()
+            
+            if "error" in ocr_result:
+                return ocr_result
+            
+            book_worksheets_data = book_data_future.result()
+            
+            if not book_worksheets_data:
+                return {"error": "Failed to load book worksheets data"}
         
-        if "error" in ocr_result:
-            return ocr_result
-        
-        print("Step 2: Loading book worksheets data...")
-        book_worksheets_data = load_book_worksheets_data()
-        
-        if not book_worksheets_data:
-            return {"error": "Failed to load book worksheets data"}
-        
-        print("Step 3: Comparing with correct answers...")
         correct_answers, total_questions = compare_answers_with_book_data(
             ocr_result, worksheet_name, book_worksheets_data
         )
         
         if correct_answers is None:
-            print("Worksheet not found in database, using Gemini for grading...")
             return use_gemini_for_grading_without_answers(ocr_result)
         
-        print("Step 4: Grading the answers...")
         grading_result = grade_student_answers(ocr_result, correct_answers, total_questions)
         
         print(f"Grading completed - Score: {grading_result.get('overall_score', 0)}/40")
@@ -403,10 +421,11 @@ def use_gemini_for_direct_grading(image_bytes_list, worksheet_name):
         print(f"Error in grading process: {str(e)}")
         return {"error": f"Grading process error: {str(e)}"}
 
-def save_results_to_mongo(token_no, worksheet_name, grading_result, s3_url, filename):
+def save_results_to_mongo(token_no: str, worksheet_name: str, grading_result: Dict[str, Any], s3_url: str, filename: str) -> Optional[str]:
     try:
         s3_urls = s3_url.split(';')
         filenames = filename.split(', ')
+        is_ai_graded = "Graded by Gemini AI" in grading_result.get("note", "")
         
         document = {
             "token_no": token_no,
@@ -428,10 +447,10 @@ def save_results_to_mongo(token_no, worksheet_name, grading_result, s3_url, file
             "correct_answers": grading_result.get("correct_answers", 0),
             "wrong_answers": grading_result.get("wrong_answers", 0),
             "unanswered": grading_result.get("unanswered", 0),
-            "grading_method": "gemini-ai-grading" if "Graded by Gemini AI" in grading_result.get("note", "") else "gemini-ocr-with-book-comparison",
-            "has_answer_key": "note" not in grading_result or "Graded by Gemini AI" not in grading_result.get("note", ""),
+            "grading_method": "gemini-ai-grading" if is_ai_graded else "gemini-ocr-with-book-comparison",
+            "has_answer_key": not is_ai_graded,
             "timestamp": (datetime.utcnow() + timedelta(hours=5, minutes=30)).isoformat(),
-            "processed_with": "gemini-2.5-flash-ai-grading" if "Graded by Gemini AI" in grading_result.get("note", "") else "gemini-2.5-flash-ocr-plus-book-comparison"
+            "processed_with": "gemini-2.5-flash-ai-grading" if is_ai_graded else "gemini-2.5-flash-ocr-plus-book-comparison"
         }
         
         result = collection.insert_one(document)
@@ -442,48 +461,45 @@ def save_results_to_mongo(token_no, worksheet_name, grading_result, s3_url, file
         print(f"MongoDB save error: {str(e)}")
         return None
 
-def extract_entries_from_response(response_data):
-    entries = []
+def extract_entries_from_response(response_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    if not isinstance(response_data, dict):
+        return []
     
-    if isinstance(response_data, dict):
-        for key, value in response_data.items():
-            if (not key.startswith('_') and 
-                isinstance(value, dict) and 
-                'question' in value and 
-                'answer' in value):
-                
-                entries.append({
-                    'question_id': key,
-                    'question': value['question'],
-                    'answer': value['answer']
-                })
+    entries = [
+        {
+            'question_id': key,
+            'question': value['question'],
+            'answer': value['answer']
+        }
+        for key, value in response_data.items()
+        if (not key.startswith('_') and 
+            isinstance(value, dict) and 
+            'question' in value and 
+            'answer' in value)
+    ]
     
     print(f"Extracted {len(entries)} entries from OCR response")
     return entries
 
-def deduplicate_student_entries(all_entries):
-    question_groups = {}
+def deduplicate_student_entries(all_entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    from collections import defaultdict
+    
+    question_groups = defaultdict(list)
+    
     for entry in all_entries:
         norm_question = ' '.join(entry['question'].lower().strip().split())
-        
-        if norm_question not in question_groups:
-            question_groups[norm_question] = []
-        
         question_groups[norm_question].append(entry)
     
     deduplicated = []
-    for _, entries in question_groups.items():
+    for entries in question_groups.values():
         if len(entries) == 1:
             deduplicated.append(entries[0])
         else:
-            best_entry = entries[0]
-            for entry in entries[1:]:
-                if not best_entry['answer'].strip() and entry['answer'].strip():
-                    best_entry = entry
-                elif (best_entry['answer'].strip() and entry['answer'].strip() and 
-                      len(entry['answer']) > len(best_entry['answer'])):
-                    best_entry = entry
-            
+            # Select best entry based on answer content
+            best_entry = max(entries, key=lambda e: (
+                bool(e['answer'].strip()),  # Prefer answered
+                len(e['answer'])  # Then prefer longer answers
+            ))
             deduplicated.append(best_entry)
     
     return deduplicated
