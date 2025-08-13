@@ -3,7 +3,7 @@ from datetime import datetime
 from io import BytesIO
 import google.generativeai as genai
 from conns import groq_client, qacollection
-from utils import upload_to_s3, extract_entries_from_response
+from utils import upload_file_to_s3, extract_entries_from_response
 import re
 import json
 import base64
@@ -129,7 +129,7 @@ def main(images, model):
             filename = os.path.basename(image_path)
             worksheet_name = os.path.splitext(filename)[0]
             
-            s3_url = upload_to_s3(image_path)
+            s3_url = upload_file_to_s3(image_path)
             if not s3_url:
                 raise Exception(f"Failed to upload image to S3: {image_path}")
             

@@ -4,6 +4,7 @@ import os
 import boto3
 from google import genai
 from groq import Groq
+from openai import OpenAI
 
 load_dotenv()
 
@@ -24,6 +25,9 @@ s3_client = boto3.client(
 
 # Gemini connection
 gemini_client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+
+# OpenAI Client
+openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # Groq Client
 groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))

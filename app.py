@@ -3,22 +3,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any
 import os
 import tempfile
-import shutil
-from utils import use_gemini_for_direct_grading, save_results_to_mongo, upload_to_s3
+from utils import process_worksheet_with_gemini_direct_grading, save_worksheet_results_to_mongodb, upload_file_to_s3
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import uvicorn
 from contextlib import asynccontextmanager
-import aiofiles 
 
-# Global executor for better resource management
 executor = ThreadPoolExecutor(max_workers=min(10, (os.cpu_count() or 1) * 2))
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
     yield
-    # Shutdown - cleanup executor
     executor.shutdown(wait=True)
 
 app = FastAPI(lifespan=lifespan)
@@ -40,7 +35,6 @@ async def healthcheck() -> Dict[str, str]:
     return {"message": "ok"}
 
 async def process_student_worksheet(token_no: str, worksheet_name: str, files: List[UploadFile]) -> Dict[str, Any]:
-    """Process worksheet with optimized async operations"""
     temp_paths = []
     s3_urls = []
     combined_filenames = []
@@ -48,7 +42,6 @@ async def process_student_worksheet(token_no: str, worksheet_name: str, files: L
     try:
         all_image_bytes = []
         
-        # Process files concurrently
         async def process_single_file(file: UploadFile) -> tuple[str, str, bytes]:
             combined_filenames.append(file.filename)
             
@@ -60,7 +53,7 @@ async def process_student_worksheet(token_no: str, worksheet_name: str, files: L
                 temp_paths.append(temp_path)
             
             loop = asyncio.get_event_loop()
-            s3_url = await loop.run_in_executor(executor, upload_to_s3, temp_path)
+            s3_url = await loop.run_in_executor(executor, upload_file_to_s3, temp_path)
             
             if not s3_url:
                 raise Exception(f"Failed to upload image to S3: {file.filename}")
@@ -75,14 +68,14 @@ async def process_student_worksheet(token_no: str, worksheet_name: str, files: L
         
         loop = asyncio.get_event_loop()
         grading_result = await loop.run_in_executor(
-            executor, use_gemini_for_direct_grading, all_image_bytes, worksheet_name
+            executor, process_worksheet_with_gemini_direct_grading, all_image_bytes, worksheet_name
         )
         
         if "error" in grading_result:
             return {"filename": ", ".join(combined_filenames), "error": grading_result["error"], "success": False}
         
         mongodb_id = await loop.run_in_executor(
-            executor, save_results_to_mongo, token_no, worksheet_name, grading_result, ";".join(s3_urls), ", ".join(combined_filenames)
+            executor, save_worksheet_results_to_mongodb, token_no, worksheet_name, grading_result, ";".join(s3_urls), ", ".join(combined_filenames)
         )
         
         return {
@@ -125,13 +118,7 @@ async def process_student_worksheet(token_no: str, worksheet_name: str, files: L
         asyncio.create_task(cleanup_temp_files())
 
 @app.post("/process-worksheets")
-async def process_worksheets(
-    token_no: str, 
-    worksheet_name: str, 
-    files: List[UploadFile] = File(...)
-) -> Dict[str, Any]:
-    """Process worksheets endpoint with validation"""
-    # Validate inputs
+async def process_worksheets(token_no: str, worksheet_name: str, files: List[UploadFile] = File(...)) -> Dict[str, Any]:
     if not files:
         raise HTTPException(status_code=400, detail="No files were uploaded")
     
@@ -141,7 +128,6 @@ async def process_worksheets(
     if not worksheet_name:
         raise HTTPException(status_code=400, detail="worksheet_name is required")
     
-    # Validate file types
     allowed_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
     for file in files:
         ext = os.path.splitext(file.filename)[1].lower()

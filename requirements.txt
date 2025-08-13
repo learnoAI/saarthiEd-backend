@@ -7,3 +7,5 @@ google-genai>=0.4.0
 python-multipart
 Pillow
 groq==0.22.0
+openai==1.99.9
+httpx==0.28.1
