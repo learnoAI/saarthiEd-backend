@@ -1,4 +1,3 @@
-import os
 import json
 import re
 from typing import List, Dict, Any, Optional, Tuple
@@ -28,7 +27,6 @@ def upload_to_s3(file_path: str) -> Optional[str]:
         file_name = Path(file_path).name
         s3_key = f"worksheets-{file_name}"
         
-        # Use larger buffer for better I/O performance
         with open(file_path, 'rb', buffering=8192) as file_data:
             s3_client.upload_fileobj(
                 file_data, 
@@ -311,7 +309,7 @@ def use_gemini_for_grading_without_answers(ocr_result: Dict[str, Any]) -> Dict[s
     try:
         # Build questions text more efficiently
         questions_parts = []
-        for i, (question_id, question_data) in enumerate(ocr_result.items()):
+        for i, (_, question_data) in enumerate(ocr_result.items()):
             question_number = i + 1
             question_text = question_data.get('question', '')
             student_answer = question_data.get('answer', '')
