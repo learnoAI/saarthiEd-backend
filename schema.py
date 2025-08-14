@@ -21,6 +21,7 @@ class GradingResult(BaseModel):
     wrong_answers: int = Field(..., description="Number of incorrect answers")
     unanswered: int = Field(..., description="Number of unanswered questions")
     overall_feedback: str = Field(..., description="Encouraging feedback for the student in 1 line")
+    reason_why: str = Field(..., description="Reason why YOU graded the student this score in 1 line")
 
 class ExtractedQuestion(BaseModel):
     question_number: int = Field(description="The unique identifier for the question")

@@ -200,22 +200,31 @@ def grade_questions_with_gemini_ai(extracted_questions: ExtractedQuestions) -> D
 
         """
 
-        print("Sending questions to Gemini for grading...")
-        grading_response = gemini_client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=[ai_grading_prompt],
-            config=types.GenerateContentConfig(
-                response_mime_type='application/json',
-                response_schema=GradingResult,
-                temperature=0.1,
-                # thinking_config=types.ThinkingConfig(thinking_budget=0)
-            )
-        )
+        # print("Sending questions to Gemini for grading...")
+        # grading_response = gemini_client.models.generate_content(
+        #     model='gemini-2.5-flash',
+        #     contents=[ai_grading_prompt],
+        #     config=types.GenerateContentConfig(
+        #         response_mime_type='application/json',
+        #         response_schema=GradingResult,
+        #         temperature=0.1,
+        #         # thinking_config=types.ThinkingConfig(thinking_budget=0)
+        #     )
+        # )
+        # grading_response_text = grading_response.text
 
-        grading_response_text = grading_response.text
-        
+        print('sending questions to openai for grading')
+        grading_response = openai_client.responses.parse(
+            model="gpt-5-nano",
+            input=ai_grading_prompt,
+            text_format=GradingResult,
+            text={
+                "verbosity": "high"
+            },
+        )
+        grading_response_text = grading_response.output_text
+
         parsed_grading_result = json.loads(grading_response_text)
-        
         individual_question_scores = parsed_grading_result.get("question_scores", [])
         incorrect_questions = []
         correct_questions = []
@@ -242,10 +251,10 @@ def grade_questions_with_gemini_ai(extracted_questions: ExtractedQuestions) -> D
             "correct_answers": parsed_grading_result.get("correct_answers", len(correct_questions)),
             "wrong_answers": parsed_grading_result.get("wrong_answers", len(incorrect_questions)),
             "unanswered": parsed_grading_result.get("unanswered", len(blank_questions)),
-            "note": "Graded by Gemini AI - correct answers not available in database"
+            "note": "Graded by Gemini AI - correct answers not available in database",
+            "reason_why": parsed_grading_result.get("reason_why", "No specific reason provided")
         }
         
-        print(f"Gemini grading completed - Score: {comprehensive_grading_result.get('overall_score', 0)}/{TOTAL_POSSIBLE_POINTS}")
         return comprehensive_grading_result
         
     except json.JSONDecodeError as json_decode_error:
@@ -299,7 +308,8 @@ def save_worksheet_results_to_mongodb(student_token_number: str, worksheet_ident
             "grading_method": "gemini-ai-grading" if is_ai_graded_worksheet else "gemini-ocr-with-book-comparison",
             "has_answer_key": not is_ai_graded_worksheet,
             "timestamp": (datetime.utcnow() + timedelta(hours=5, minutes=30)).isoformat(),
-            "processed_with": "gemini-2.5-flash" if is_ai_graded_worksheet else "gemini-2.5-flash-plus-book-comparison"
+            "processed_with": "gemini-2.5-flash" if is_ai_graded_worksheet else "gemini-2.5-flash-plus-book-comparison",
+            "reason_why": grading_results.get("reason_why", "")
         }
         
         insertion_result = collection.insert_one(mongodb_document)
