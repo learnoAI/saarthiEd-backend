@@ -132,7 +132,7 @@ def extract_questions_with_gemini_ocr(image_bytes_list: List[bytes], worksheet_n
         #     ],
         #     text_format=ExtractedQuestions,
         #     text={
-        #         "verbosity": "low"
+        #         "verbosity": "high"
         #     }
         # )
 
