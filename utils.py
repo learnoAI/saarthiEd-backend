@@ -14,7 +14,7 @@ from schema import ExtractedQuestions, GradingResult
 # Constants
 S3_BUCKET_NAME = "learno-pdf-document"
 S3_REGION = "ap-south-1"
-JPEG_QUALITY = 95
+PNG_QUALITY = 100
 MAX_WORKER_THREADS = 4
 TOTAL_POSSIBLE_POINTS = 40
 
@@ -43,7 +43,7 @@ def _convert_image_to_rgb(image_bytes: bytes) -> bytes:
         
         rgb_image = image.convert('RGB')
         image_buffer = io.BytesIO()
-        rgb_image.save(image_buffer, format='JPEG', quality=JPEG_QUALITY, optimize=True)
+        rgb_image.save(image_buffer, format='PNG', quality=PNG_QUALITY, optimize=True, subsampling=0)
         return image_buffer.getvalue()
 
 def extract_questions_with_gemini_ocr(image_bytes_list: List[bytes], worksheet_name: str = None) -> Dict[str, Any]:
@@ -85,6 +85,7 @@ def extract_questions_with_gemini_ocr(image_bytes_list: List[bytes], worksheet_n
             5. Return the questions in the order of question number.
             6. Some sheets have multiple columns of questions. THESE ARE INDIVIDUAL QUESTIONS WHERE STUDENT HAS TO FILL IN THE ANSWERS. EXTRACT THEM PROPERLY
             7. Include the entire question text in the question field - do not miss anything. Do not include the student's answer in the question field.
+            8. CAREFULLY SEE WHICH IS THE STUDENT's ANSWER AS THEY ARE USING A PENCIL TO MARK THEIR ANSWERS.
             </Rules>
 
             """
@@ -92,7 +93,7 @@ def extract_questions_with_gemini_ocr(image_bytes_list: List[bytes], worksheet_n
         # Use Gemini for OCR
         gemini_content_parts = [custom_ocr_prompt]
         for processed_image_data in processed_images:
-            gemini_content_parts.append(types.Part.from_bytes(data=processed_image_data, mime_type='image/jpeg'))
+            gemini_content_parts.append(types.Part.from_bytes(data=processed_image_data, mime_type='image/png'))
             
         print(f"Sending {len(processed_images)} images to Gemini OCR in a single request...")
         gemini_response = gemini_client.models.generate_content(
@@ -117,7 +118,7 @@ def extract_questions_with_gemini_ocr(image_bytes_list: List[bytes], worksheet_n
         #     base64_encoded_image = base64.b64encode(processed_image_data).decode('utf-8')
         #     openai_content_parts.append({
         #         "type": "input_image",
-        #         "image_url": f"data:image/jpeg;base64,{base64_encoded_image}"
+        #         "image_url": f"data:image/png;base64,{base64_encoded_image}"
         #     })
         
         # print(f"Sending {len(processed_images)} images to OpenAI OCR in a single request...")
@@ -141,7 +142,6 @@ def extract_questions_with_gemini_ocr(image_bytes_list: List[bytes], worksheet_n
         
     except json.JSONDecodeError as json_error:
         print(f"JSON decode error: {str(json_error)}")
-        print(f"Raw response: {gemini_response.text}")
         return {"error": f"Failed to parse OCR response as JSON: {str(json_error)}"}
     except Exception as ocr_error:
         print(f"OCR error: {str(ocr_error)}")
@@ -212,20 +212,7 @@ def grade_questions_with_gemini_ai(extracted_questions: ExtractedQuestions) -> D
             )
         )
 
-        grading_response_text = grading_response.text.strip()
-        
-        # Alternative OpenAI grading (commented out)
-        # print("sending questions to openai for grading")
-        # openai_grading_response = openai_client.responses.parse(
-        #     model="gpt-5-nano",
-        #     input=ai_grading_prompt
-        # )
-        # grading_response_text = openai_grading_response.output_text
-        
-        if grading_response_text.startswith('```json'):
-            grading_response_text = grading_response_text[7:]
-        if grading_response_text.endswith('```'):
-            grading_response_text = grading_response_text[:-3]
+        grading_response_text = grading_response.text
         
         parsed_grading_result = json.loads(grading_response_text)
         
@@ -263,14 +250,12 @@ def grade_questions_with_gemini_ai(extracted_questions: ExtractedQuestions) -> D
         
     except json.JSONDecodeError as json_decode_error:
         print(f"JSON decode error in Gemini grading: {str(json_decode_error)}")
-        print(f"Raw response: {grading_response.text}")
         return {"error": f"Failed to parse Gemini grading response as JSON: {str(json_decode_error)}"}
     except Exception as grading_error:
         print(f"Error in Gemini grading: {str(grading_error)}")
         return {"error": f"Gemini grading error: {str(grading_error)}"}
 
 def process_worksheet_with_gemini_direct_grading(image_bytes_list: List[bytes], worksheet_name: str) -> Dict[str, Any]:
-    """Extract questions from images and grade them using Gemini AI in one process."""
     try:
         extraction_result = extract_questions_with_gemini_ocr(image_bytes_list, worksheet_name)
         
@@ -287,7 +272,6 @@ def process_worksheet_with_gemini_direct_grading(image_bytes_list: List[bytes], 
         return {"error": f"Grading process error: {str(processing_error)}"}
 
 def save_worksheet_results_to_mongodb(student_token_number: str, worksheet_identifier: str, grading_results: Dict[str, Any], s3_file_url: str, original_filename: str) -> Optional[str]:
-    """Save grading results to MongoDB collection."""
     try:
         parsed_s3_urls = s3_file_url.split(';')
         parsed_filenames = original_filename.split(', ')
