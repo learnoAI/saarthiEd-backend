@@ -111,7 +111,7 @@ def extract_questions_with_gemini_ocr(image_bytes_list: List[bytes], worksheet_n
         print(extraction_result)
         return extraction_result
 
-        # Alternative OpenAI implementation (commented out)
+        # Alternative OpenAI implementation
         # openai_content_parts = [{"type": "input_text", "text": custom_ocr_prompt}]
         
         # for processed_image_data in processed_images:
@@ -200,31 +200,32 @@ def grade_questions_with_gemini_ai(extracted_questions: ExtractedQuestions) -> D
 
         """
 
-        # print("Sending questions to Gemini for grading...")
-        # grading_response = gemini_client.models.generate_content(
-        #     model='gemini-2.5-flash',
-        #     contents=[ai_grading_prompt],
-        #     config=types.GenerateContentConfig(
-        #         response_mime_type='application/json',
-        #         response_schema=GradingResult,
-        #         temperature=0.1,
-        #         # thinking_config=types.ThinkingConfig(thinking_budget=0)
-        #     )
-        # )
-        # grading_response_text = grading_response.text
-
-        print('sending questions to openai for grading')
-        grading_response = openai_client.responses.parse(
-            model="gpt-5-nano",
-            input=ai_grading_prompt,
-            text_format=GradingResult,
-            text={
-                "verbosity": "high"
-            },
+        print("Sending questions to Gemini for grading...")
+        grading_response = gemini_client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[ai_grading_prompt],
+            config=types.GenerateContentConfig(
+                response_mime_type='application/json',
+                response_schema=GradingResult,
+                temperature=0.1,
+                # thinking_config=types.ThinkingConfig(thinking_budget=0)
+            )
         )
-        grading_response_text = grading_response.output_text
+        grading_response_text = grading_response.text
+
+        # print('sending questions to openai for grading')
+        # grading_response = openai_client.responses.parse(
+        #     model="gpt-5-nano",
+        #     input=ai_grading_prompt,
+        #     text_format=GradingResult,
+        #     text={
+        #         "verbosity": "high"
+        #     },
+        # )
+        # grading_response_text = grading_response.output_text
 
         parsed_grading_result = json.loads(grading_response_text)
+        print(parsed_grading_result)
         individual_question_scores = parsed_grading_result.get("question_scores", [])
         incorrect_questions = []
         correct_questions = []

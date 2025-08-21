@@ -8,6 +8,8 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import uvicorn
 from contextlib import asynccontextmanager
+from conns import collection
+from schema import getImages
 
 executor = ThreadPoolExecutor(max_workers=min(10, (os.cpu_count() or 1) * 2))
 
@@ -140,6 +142,11 @@ async def process_worksheets(token_no: str, worksheet_name: str, files: List[Upl
     print(f"Processing {len(files)} images for worksheet {worksheet_name}, token {token_no}")
     
     return await process_student_worksheet(token_no, worksheet_name, files)
+
+@app.get("/get-worksheet-images")
+async def get_worksheet_images(req: getImages):
+    doc = collection.find_one({"token_no": req.token_no, "worksheet_name": req.worksheet_name})
+    return doc['s3_urls']
 
 if __name__ == "__main__":
     uvicorn.run(

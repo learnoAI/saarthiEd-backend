@@ -30,3 +30,7 @@ class ExtractedQuestion(BaseModel):
 
 class ExtractedQuestions(BaseModel):
     questions: List[ExtractedQuestion] = Field(description="The list of questions and their corresponding student answers")
+
+class getImages(BaseModel):
+    token_no: str = Field(..., description="The unique identifier for the student")
+    worksheet_name: str = Field(..., description="The name of the worksheet")
