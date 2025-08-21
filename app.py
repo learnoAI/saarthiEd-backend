@@ -143,7 +143,7 @@ async def process_worksheets(token_no: str, worksheet_name: str, files: List[Upl
     
     return await process_student_worksheet(token_no, worksheet_name, files)
 
-@app.get("/get-worksheet-images")
+@app.post("/get-worksheet-images")
 async def get_worksheet_images(req: getImages):
     doc = collection.find_one({"token_no": req.token_no, "worksheet_name": req.worksheet_name})
     return doc['s3_urls']
