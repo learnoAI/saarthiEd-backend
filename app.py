@@ -148,6 +148,11 @@ async def get_worksheet_images(req: getImages):
     doc = collection.find_one({"token_no": req.token_no, "worksheet_name": req.worksheet_name})
     return doc['s3_urls']
 
+@app.get("/total-ai-graded")
+async def total_ai_graded():
+    count = collection.estimated_document_count()
+    return {"total_ai_graded": count}
+
 if __name__ == "__main__":
     uvicorn.run(
         "app:app", 
