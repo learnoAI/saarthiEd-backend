@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from conns import collection
 from schema import getImages, gradeDetails
 
-executor = ThreadPoolExecutor(max_workers=min(10, (os.cpu_count() or 1) * 2))
+executor = ThreadPoolExecutor(max_workers=min(20, (os.cpu_count() or 1) * 4))
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -145,12 +145,21 @@ async def process_worksheets(token_no: str, worksheet_name: str, files: List[Upl
 
 @app.post("/get-worksheet-images")
 async def get_worksheet_images(req: getImages):
-    doc = collection.find_one({"token_no": req.token_no, "worksheet_name": req.worksheet_name})
-    return doc['s3_urls']
+    loop = asyncio.get_event_loop()
+    doc = await loop.run_in_executor(
+        executor, 
+        collection.find_one, 
+        {"token_no": req.token_no, "worksheet_name": req.worksheet_name}
+    )
+    if doc and 's3_urls' in doc:
+        return doc['s3_urls']
+    else:
+        raise HTTPException(status_code=404, detail="Worksheet not found")
 
 @app.get("/total-ai-graded")
 async def total_ai_graded():
-    count = collection.estimated_document_count()
+    loop = asyncio.get_event_loop()
+    count = await loop.run_in_executor(executor, collection.estimated_document_count)
     return {"total_ai_graded": count}
 
 @app.post("/student-grading-details")
@@ -164,31 +173,42 @@ async def get_student_gradind_details(req: gradeDetails):
                     "$ne": "NA"
                 }}
     
-    doc = collection.find_one(query, 
-                              projection = {
-                                    "token_no": 0,
-                                    "worksheet_name": 0,
-                                    "filename": 0,
-                                    "s3_urls": 0,
-                                    "image_count": 0,
-                                    "filenames": 0,
-                                    "_id": 0,
-                                    "grading_method": 0,
-                                    "has_answer_key": 0,
-                                    "timestamp": 0,
-                                    "processed_with": 0,
-                                    "reason_why": 0,
-                                    "overall_feedback": 0
-                                } )
-
+    projection = {
+        "token_no": 0,
+        "worksheet_name": 0,
+        "filename": 0,
+        "s3_urls": 0,
+        "image_count": 0,
+        "filenames": 0,
+        "_id": 0,
+        "grading_method": 0,
+        "has_answer_key": 0,
+        "timestamp": 0,
+        "processed_with": 0,
+        "reason_why": 0,
+        "overall_feedback": 0
+    }
+    
+    loop = asyncio.get_event_loop()
+    doc = await loop.run_in_executor(
+        executor,
+        lambda: collection.find_one(query, projection=projection)
+    )
+    
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Student grading details not found")
+    
     return doc
 
 if __name__ == "__main__":
     uvicorn.run(
         "app:app", 
+        host="0.0.0.0",
         port=8080, 
         reload=True,
-        workers=2,
+        workers=1,
         loop="asyncio",
-        access_log=False
+        access_log=False,
+        limit_concurrency=1000,
+        limit_max_requests=1000
     )
