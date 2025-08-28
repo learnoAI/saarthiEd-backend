@@ -19,7 +19,6 @@ MAX_WORKER_THREADS = 4
 TOTAL_POSSIBLE_POINTS = 40
 
 def load_book_worksheets_answers() -> Dict[str, Any]:
-    """Load the book worksheets answers from the JSON file."""
     try:
         book_worksheets_path = Path(__file__).parent / 'Results' / 'book_worksheets.json'
         with open(book_worksheets_path, 'r', encoding='utf-8') as f:
@@ -29,9 +28,7 @@ def load_book_worksheets_answers() -> Dict[str, Any]:
         return {}
 
 def find_worksheet_answers(worksheet_name: str, book_worksheets_data: Dict[str, Any]) -> Optional[List[str]]:
-    """Find answers for a specific worksheet in the book data."""
     try:
-        # Extract worksheet number from the name
         worksheet_number = None
         if worksheet_name.strip().isdigit():
             worksheet_number = worksheet_name.strip()
@@ -43,13 +40,12 @@ def find_worksheet_answers(worksheet_name: str, book_worksheets_data: Dict[str, 
         if not worksheet_number:
             return None
         
-        # Search through all books for this worksheet
         books = book_worksheets_data.get('books', {})
         for book_id, book_data in books.items():
             worksheets = book_data.get('worksheets', {})
             if worksheet_number in worksheets:
                 answers = worksheets[worksheet_number]
-                if answers:  # Only return if there are actual answers
+                if answers:
                     print(f"Found answers for worksheet {worksheet_number} in book {book_id}: {len(answers)} answers")
                     return answers
         
