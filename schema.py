@@ -34,3 +34,8 @@ class ExtractedQuestions(BaseModel):
 class getImages(BaseModel):
     token_no: str = Field(..., description="The unique identifier for the student")
     worksheet_name: str = Field(..., description="The name of the worksheet")
+
+class gradeDetails(BaseModel):
+    token_no: str = Field(..., description="The unique identifier for the student")
+    worksheet_name: str = Field(..., description="The name of the worksheet")
+    overall_score: int

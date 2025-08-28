@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 import uvicorn
 from contextlib import asynccontextmanager
 from conns import collection
-from schema import getImages
+from schema import getImages, gradeDetails
 
 executor = ThreadPoolExecutor(max_workers=min(10, (os.cpu_count() or 1) * 2))
 
@@ -154,9 +154,10 @@ async def total_ai_graded():
     return {"total_ai_graded": count}
 
 @app.post("/student-grading-details")
-async def get_student_gradind_details(req: getImages):
+async def get_student_gradind_details(req: gradeDetails):
     query = {"token_no": req.token_no, 
-             "worksheet_name": req.worksheet_name, 
+             "worksheet_name": req.worksheet_name,
+             "overall_score": req.overall_score,
              "question_scores": {
                     "$exists": True,
                     "$ne": None,
