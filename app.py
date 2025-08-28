@@ -153,6 +153,35 @@ async def total_ai_graded():
     count = collection.estimated_document_count()
     return {"total_ai_graded": count}
 
+@app.post("/student-grading-details")
+async def get_student_gradind_details(req: getImages):
+    query = {"token_no": req.token_no, 
+             "worksheet_name": req.worksheet_name, 
+             "question_scores": {
+                    "$exists": True,
+                    "$ne": None,
+                    "$ne": "NA"
+                }}
+    
+    doc = collection.find_one(query, 
+                              projection = {
+                                    "token_no": 0,
+                                    "worksheet_name": 0,
+                                    "filename": 0,
+                                    "s3_urls": 0,
+                                    "image_count": 0,
+                                    "filenames": 0,
+                                    "_id": 0,
+                                    "grading_method": 0,
+                                    "has_answer_key": 0,
+                                    "timestamp": 0,
+                                    "processed_with": 0,
+                                    "reason_why": 0,
+                                    "overall_feedback": 0
+                                } )
+
+    return doc
+
 if __name__ == "__main__":
     uvicorn.run(
         "app:app", 
