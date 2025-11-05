@@ -9,7 +9,8 @@ from concurrent.futures import ThreadPoolExecutor
 import uvicorn
 from contextlib import asynccontextmanager
 from conns import collection
-from schema import getImages, gradeDetails
+from schema import getImages, gradeDetails, TimeRangeFilter
+from datetime import datetime
 
 executor = ThreadPoolExecutor(max_workers=min(20, (os.cpu_count() or 1) * 4))
 
@@ -156,10 +157,50 @@ async def get_worksheet_images(req: getImages):
     else:
         raise HTTPException(status_code=404, detail="Worksheet not found")
 
-@app.get("/total-ai-graded")
-async def total_ai_graded():
+@app.post("/total-ai-graded")
+async def total_ai_graded(time_filter: TimeRangeFilter = None):
+    if not time_filter or (not time_filter.start_time and not time_filter.end_time):
+        loop = asyncio.get_event_loop()
+        count = await loop.run_in_executor(executor, collection.estimated_document_count)
+        return {"total_ai_graded": count}
+    
+    def parse_and_convert_date(date_str: str, is_end_of_day: bool = False) -> str:
+        date_str = date_str.replace('Z', '+00:00')
+        
+        try:
+            dt = datetime.fromisoformat(date_str)
+        except ValueError:
+            try:
+                parts = date_str.split('-')
+                if len(parts) == 3:
+                    dt = datetime(int(parts[0]), int(parts[1]), int(parts[2]))
+                else:
+                    raise ValueError(f"Invalid date format: {date_str}")
+            except (ValueError, IndexError):
+                raise ValueError(f"Invalid date format: {date_str}. Use format like 2025-11-1 or 2025-11-01")
+        
+        if is_end_of_day:
+            dt = dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+        else:
+            dt = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        return dt.isoformat()
+    
+    query = {"timestamp": {}}
+    
+    try:
+        if time_filter.start_time:
+            query["timestamp"]["$gte"] = parse_and_convert_date(time_filter.start_time, is_end_of_day=False)
+        
+        if time_filter.end_time:
+            query["timestamp"]["$lte"] = parse_and_convert_date(time_filter.end_time, is_end_of_day=True)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+    # Count documents matching the query
     loop = asyncio.get_event_loop()
-    count = await loop.run_in_executor(executor, collection.estimated_document_count)
+    count = await loop.run_in_executor(executor, lambda: collection.count_documents(query))
+    
     return {"total_ai_graded": count}
 
 @app.post("/student-grading-details")

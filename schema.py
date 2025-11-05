@@ -39,3 +39,7 @@ class gradeDetails(BaseModel):
     token_no: str = Field(..., description="The unique identifier for the student")
     worksheet_name: str = Field(..., description="The name of the worksheet")
     overall_score: int
+
+class TimeRangeFilter(BaseModel):
+    start_time: str | None 
+    end_time: str | None 

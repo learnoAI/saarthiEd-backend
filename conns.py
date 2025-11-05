@@ -6,7 +6,7 @@ from google import genai
 from groq import Groq
 from openai import OpenAI
 
-load_dotenv()
+load_dotenv(override=True)
 
 # MongoDB connection
 mongo_client = MongoClient(os.getenv("MONGO_URI"))
