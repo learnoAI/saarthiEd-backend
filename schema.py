@@ -41,5 +41,6 @@ class gradeDetails(BaseModel):
     overall_score: int
 
 class TimeRangeFilter(BaseModel):
-    start_time: str | None 
-    end_time: str | None 
+    full: bool
+    start_time: str | None = None
+    end_time: str | None = None 

@@ -158,11 +158,18 @@ async def get_worksheet_images(req: getImages):
         raise HTTPException(status_code=404, detail="Worksheet not found")
 
 @app.post("/total-ai-graded")
-async def total_ai_graded(time_filter: TimeRangeFilter = None):
-    if not time_filter or (not time_filter.start_time and not time_filter.end_time):
-        loop = asyncio.get_event_loop()
+async def total_ai_graded(time_filter: TimeRangeFilter):
+    loop = asyncio.get_event_loop()
+    
+    if time_filter.full:
         count = await loop.run_in_executor(executor, collection.estimated_document_count)
         return {"total_ai_graded": count}
+    
+    if not time_filter.start_time and not time_filter.end_time:
+        raise HTTPException(
+            status_code=400, 
+            detail="Either set 'full' to true or provide 'start_time' and/or 'end_time'"
+        )
     
     def parse_and_convert_date(date_str: str, is_end_of_day: bool = False) -> str:
         date_str = date_str.replace('Z', '+00:00')
@@ -197,8 +204,6 @@ async def total_ai_graded(time_filter: TimeRangeFilter = None):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     
-    # Count documents matching the query
-    loop = asyncio.get_event_loop()
     count = await loop.run_in_executor(executor, lambda: collection.count_documents(query))
     
     return {"total_ai_graded": count}
