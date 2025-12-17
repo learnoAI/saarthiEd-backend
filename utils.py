@@ -1,7 +1,7 @@
 import json
 import re
 from typing import List, Dict, Any, Optional
-from conns import s3_client, gemini_client, collection, openai_client
+from conns import r2_client, gemini_client, collection, openai_client 
 from google.genai import types
 from datetime import datetime, timedelta
 from PIL import Image
@@ -9,6 +9,7 @@ import io
 import concurrent.futures
 from pathlib import Path
 import base64
+import os
 from schema import ExtractedQuestions, GradingResult
 
 # Constants
@@ -56,22 +57,43 @@ def find_worksheet_answers(worksheet_name: str, book_worksheets_data: Dict[str, 
         print(f"Error finding worksheet answers: {str(e)}")
         return None
 
+# def upload_file_to_s3(file_path: str) -> Optional[str]:
+#     try:
+#         filename = Path(file_path).name
+#         s3_object_key = f"worksheets-{filename}"
+        
+#         with open(file_path, 'rb', buffering=8192) as file_stream:
+#             s3_client.upload_fileobj(
+#                 file_stream, 
+#                 S3_BUCKET_NAME, 
+#                 s3_object_key,
+#                 ExtraArgs={'ACL': 'public-read'}
+#             )
+        
+#         return f"https://{S3_BUCKET_NAME}.s3.{S3_REGION}.amazonaws.com/{s3_object_key}"
+#     except Exception as upload_error:
+#         print(f"Error uploading to S3: {str(upload_error)}")
+#         return None
+
 def upload_file_to_s3(file_path: str) -> Optional[str]:
     try:
         filename = Path(file_path).name
-        s3_object_key = f"worksheets-{filename}"
+        r2_object_key = f"worksheets-{filename}"
+        
+        R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME")
         
         with open(file_path, 'rb', buffering=8192) as file_stream:
-            s3_client.upload_fileobj(
+            r2_client.upload_fileobj(
                 file_stream, 
-                S3_BUCKET_NAME, 
-                s3_object_key,
-                ExtraArgs={'ACL': 'public-read'}
+                R2_BUCKET_NAME, 
+                r2_object_key
             )
         
-        return f"https://{S3_BUCKET_NAME}.s3.{S3_REGION}.amazonaws.com/{s3_object_key}"
+        R2_PUBLIC_URL = os.getenv("R2_PUBLIC_URL")  # https://pub-xxx.r2.dev
+        return f"{R2_PUBLIC_URL}/{r2_object_key}"
+        
     except Exception as upload_error:
-        print(f"Error uploading to S3: {str(upload_error)}")
+        print(f"Error uploading to R2: {str(upload_error)}")
         return None
 
 def _convert_image_to_rgb(image_bytes: bytes) -> bytes:

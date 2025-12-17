@@ -16,11 +16,20 @@ qacollection = db["QAworksheets"]
 qacomments_collection = db["QAcomments"]
 
 # AWS S3 connection
-s3_client = boto3.client(
+# s3_client = boto3.client(
+#     service_name='s3',
+#     region_name=os.getenv("AWS_DEFAULT_REGION"),
+#     aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+#     aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY")
+# )
+
+#r2 client
+r2_client = boto3.client(
     service_name='s3',
-    region_name=os.getenv("AWS_DEFAULT_REGION"),
-    aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-    aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY")
+    endpoint_url=os.getenv("R2_API_URL"),
+    aws_access_key_id=os.getenv("R2_ACCESS_KEY_ID"),
+    aws_secret_access_key=os.getenv("R2_SECRET_ACCESS_KEY"),
+    region_name="auto"
 )
 
 # Gemini connection
