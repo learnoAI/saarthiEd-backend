@@ -1,7 +1,7 @@
 import json
 import re
 from typing import List, Dict, Any, Optional
-from conns import r2_client, gemini_client, collection, openai_client 
+from conns import r2_client, gemini_client, collection, openai_client, error_logs_collection 
 from google.genai import types
 from datetime import datetime, timedelta
 from PIL import Image
@@ -18,6 +18,24 @@ S3_REGION = "ap-south-1"
 PNG_QUALITY = 100
 MAX_WORKER_THREADS = 4
 TOTAL_POSSIBLE_POINTS = 40
+
+def log_error(error_type: str, error_message: str, payload: Dict[str, Any] = None, stack_trace: str = None) -> Optional[str]:
+    """Log errors to the error_logs collection in MongoDB."""
+    try:
+        import traceback
+        error_doc = {
+            "error_type": error_type,
+            "error_message": error_message,
+            "payload": payload or {},
+            "stack_trace": stack_trace or traceback.format_exc(),
+            "timestamp": (datetime.utcnow() + timedelta(hours=5, minutes=30)).isoformat()
+        }
+        result = error_logs_collection.insert_one(error_doc)
+        print(f"Error logged to MongoDB: {result.inserted_id}")
+        return str(result.inserted_id)
+    except Exception as log_error_exception:
+        print(f"Failed to log error to MongoDB: {str(log_error_exception)}")
+        return None
 
 def load_book_worksheets_answers() -> Dict[str, Any]:
     try:
@@ -94,6 +112,7 @@ def upload_file_to_s3(file_path: str) -> Optional[str]:
         
     except Exception as upload_error:
         print(f"Error uploading to R2: {str(upload_error)}")
+        log_error("R2_UPLOAD_ERROR", str(upload_error), {"file_path": file_path})
         return None
 
 def _convert_image_to_rgb(image_bytes: bytes) -> bytes:
@@ -202,9 +221,11 @@ def extract_questions_with_gemini_ocr(image_bytes_list: List[bytes], worksheet_n
         
     except json.JSONDecodeError as json_error:
         print(f"JSON decode error: {str(json_error)}")
+        log_error("OCR_JSON_DECODE_ERROR", str(json_error), {"worksheet_name": worksheet_name, "image_count": len(image_bytes_list)})
         return {"error": f"Failed to parse OCR response as JSON: {str(json_error)}"}
     except Exception as ocr_error:
         print(f"OCR error: {str(ocr_error)}")
+        log_error("OCR_ERROR", str(ocr_error), {"worksheet_name": worksheet_name, "image_count": len(image_bytes_list)})
         return {"error": f"OCR error: {str(ocr_error)}"}
 
 def grade_questions_with_gemini_ai(extracted_questions: ExtractedQuestions) -> Dict[str, Any]:
@@ -320,9 +341,11 @@ def grade_questions_with_gemini_ai(extracted_questions: ExtractedQuestions) -> D
         
     except json.JSONDecodeError as json_decode_error:
         print(f"JSON decode error in Gemini grading: {str(json_decode_error)}")
+        log_error("GRADING_JSON_DECODE_ERROR", str(json_decode_error), {"question_count": len(extracted_questions.questions) if extracted_questions else 0})
         return {"error": f"Failed to parse Gemini grading response as JSON: {str(json_decode_error)}"}
     except Exception as grading_error:
         print(f"Error in Gemini grading: {str(grading_error)}")
+        log_error("GEMINI_GRADING_ERROR", str(grading_error), {"question_count": len(extracted_questions.questions) if extracted_questions else 0})
         return {"error": f"Gemini grading error: {str(grading_error)}"}
 
 def grade_questions_with_book_answers(extracted_questions: ExtractedQuestions, book_answers: List[str]) -> Dict[str, Any]:
@@ -436,9 +459,11 @@ def grade_questions_with_book_answers(extracted_questions: ExtractedQuestions, b
         
     except json.JSONDecodeError as json_decode_error:
         print(f"JSON decode error in book answer grading: {str(json_decode_error)}")
+        log_error("BOOK_GRADING_JSON_DECODE_ERROR", str(json_decode_error), {"question_count": len(extracted_questions.questions) if extracted_questions else 0, "book_answers_count": len(book_answers) if book_answers else 0})
         return {"error": f"Failed to parse book answer grading response as JSON: {str(json_decode_error)}"}
     except Exception as grading_error:
         print(f"Error in book answer grading: {str(grading_error)}")
+        log_error("BOOK_GRADING_ERROR", str(grading_error), {"question_count": len(extracted_questions.questions) if extracted_questions else 0, "book_answers_count": len(book_answers) if book_answers else 0})
         return {"error": f"Book answer grading error: {str(grading_error)}"}
 
 def process_worksheet_with_gemini_direct_grading(image_bytes_list: List[bytes], worksheet_name: str) -> Dict[str, Any]:
@@ -464,6 +489,7 @@ def process_worksheet_with_gemini_direct_grading(image_bytes_list: List[bytes], 
         
     except Exception as processing_error:
         print(f"Error in grading process: {str(processing_error)}")
+        log_error("GRADING_PROCESS_ERROR", str(processing_error), {"worksheet_name": worksheet_name, "image_count": len(image_bytes_list)})
         return {"error": f"Grading process error: {str(processing_error)}"}
 
 def save_worksheet_results_to_mongodb(student_token_number: str, worksheet_identifier: str, grading_results: Dict[str, Any], s3_file_url: str, original_filename: str) -> Optional[str]:
@@ -520,4 +546,5 @@ def save_worksheet_results_to_mongodb(student_token_number: str, worksheet_ident
         
     except Exception as mongodb_save_error:
         print(f"MongoDB save error: {str(mongodb_save_error)}")
+        log_error("MONGODB_SAVE_ERROR", str(mongodb_save_error), {"token_no": student_token_number, "worksheet_name": worksheet_identifier, "filename": original_filename})
         return None

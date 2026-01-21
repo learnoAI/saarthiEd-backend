@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any
 import os
 import tempfile
-from utils import process_worksheet_with_gemini_direct_grading, save_worksheet_results_to_mongodb, upload_file_to_s3
+from utils import process_worksheet_with_gemini_direct_grading, save_worksheet_results_to_mongodb, upload_file_to_s3, log_error
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import uvicorn
@@ -101,14 +101,21 @@ async def process_student_worksheet(token_no: str, worksheet_name: str, files: L
         }
     
     except Exception as e:
+        log_error("WORKSHEET_PROCESSING_ERROR", str(e), {
+            "token_no": token_no,
+            "worksheet_name": worksheet_name,
+            "filenames": combined_filenames,
+            "s3_urls": s3_urls
+        })
+
         error_info = {
             "success": False,
             "error": str(e)
         }
-        
+
         if combined_filenames:
             error_info["image_filenames"] = combined_filenames
-            
+
         return error_info
     finally:
         async def cleanup_temp_files():

@@ -14,6 +14,7 @@ db = mongo_client["saarthiEd"]
 collection = db["worksheets"]
 qacollection = db["QAworksheets"]
 qacomments_collection = db["QAcomments"]
+error_logs_collection = db["error_logs"]
 
 # AWS S3 connection
 # s3_client = boto3.client(
