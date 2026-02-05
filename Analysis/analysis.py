@@ -210,7 +210,7 @@ def generate_gemini_analysis_report(analysis_data, qa_worksheets_sample, qa_comm
     try:
         # Use Gemini to generate the analysis report
         response = gemini_client.models.generate_content(
-            model='gemini-2.0-flash',
+            model='gemini-3-flash-preview',
             contents=prompt
         )
         

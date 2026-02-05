@@ -12,7 +12,7 @@ import time
 import os
 
 genai.configure(api_key=os.environ.get("GOOGLE_API_KEY"))
-gemini_client = genai.GenerativeModel('gemini-2.5-flash-preview-05-20')
+gemini_client = genai.GenerativeModel('gemini-3-flash-preview')
 
 class RPMHandler:
     def __init__(self, rpm_limit):
@@ -146,7 +146,7 @@ def main(images, model):
                         "name": worksheet_name,
                         "entries": entries,
                         "processor": "gemini",
-                        "model": "gemini-2.5-flash-preview-05-20",
+                        "model": "gemini-3-flash-preview",
                         "processed_at": datetime.now(),
                         "source_image": s3_url,
                         "completed": False

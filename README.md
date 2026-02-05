@@ -1,11 +1,11 @@
-# SaarthiEd Backend - Gemini 2.5 Flash Integration
+# SaarthiEd Backend - Gemini 3 Flash Integration
 
-This backend application processes student worksheets using Google Gemini 2.5 Flash for both OCR (text extraction) and intelligent scoring.
+This backend application processes student worksheets using Google Gemini 3 Flash for both OCR (text extraction) and intelligent scoring.
 
 ## Features
 
-- **Image Processing**: Uses Gemini 2.5 Flash for OCR to extract questions and answers from worksheet images
-- **Intelligent Scoring**: Uses Gemini 2.5 Flash as an LLM to score student answers against expected answers
+- **Image Processing**: Uses Gemini 3 Flash for OCR to extract questions and answers from worksheet images
+- **Intelligent Scoring**: Uses Gemini 3 Flash as an LLM to score student answers against expected answers
 - **Parallel Processing**: Processes multiple worksheets simultaneously for optimal performance
 - **MongoDB Integration**: Saves scoring results and question-wise scores to MongoDB
 - **S3 Storage**: Uploads original images to AWS S3 for archival
@@ -14,12 +14,12 @@ This backend application processes student worksheets using Google Gemini 2.5 Fl
 
 ### OCR Pipeline
 1. Upload worksheet image to S3
-2. Use Gemini 2.5 Flash to extract text in structured JSON format
+2. Use Gemini 3 Flash to extract text in structured JSON format
 3. Parse questions and student answers
 
 ### Scoring Pipeline
 1. Load expected answers from Results/dataset_questions_answers.json
-2. Use Gemini 2.5 Flash to intelligently compare student answers with expected answers
+2. Use Gemini 3 Flash to intelligently compare student answers with expected answers
 3. Generate question-wise scores and overall score
 4. Save results to MongoDB
 
@@ -55,11 +55,11 @@ Process multiple student worksheets
       "overall_score": 35,
       "entries_count": 40,
       "question_scores": [...],
-      "processed_with": "gemini-2.5-flash"
+      "processed_with": "gemini-3-flash-preview"
     }
   ],
   "errors": [],
-  "model_used": "gemini-2.5-flash"
+  "model_used": "gemini-3-flash-preview"
 }
 ```
 
@@ -98,7 +98,7 @@ python test_gemini_integration.py
 
 ## Key Changes from Previous Version
 
-1. **Replaced Groq with Gemini 2.5 Flash**: Complete migration to Google's latest multimodal model
+1. **Replaced Groq with Gemini 3 Flash**: Complete migration to Google's latest multimodal model
 2. **Enhanced OCR**: Better text extraction with structured JSON output
 3. **Intelligent Scoring**: LLM-based scoring instead of simple string matching
 4. **MongoDB Integration**: Full database integration for result storage
@@ -149,7 +149,7 @@ Documents are saved in the `worksheets` collection with the following structure:
     }
   ],
   "timestamp": "ISODate",
-  "processed_with": "gemini-2.5-flash"
+  "processed_with": "gemini-3-flash-preview"
 }
 ```
 

@@ -235,7 +235,7 @@ def extract_questions_with_gemini_ocr(image_bytes_list: List[bytes], worksheet_n
             
         print(f"Sending {len(processed_images)} images to Gemini OCR in a single request...")
         gemini_response = gemini_client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3-flash-preview',
             contents=gemini_content_parts,
             config=types.GenerateContentConfig(
                 response_mime_type='application/json',
@@ -342,7 +342,7 @@ def grade_questions_with_gemini_ai(extracted_questions: ExtractedQuestions) -> D
 
         print("Sending questions to Gemini for grading...")
         grading_response = gemini_client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3-flash-preview',
             contents=[ai_grading_prompt],
             config=types.GenerateContentConfig(
                 response_mime_type='application/json',
@@ -485,7 +485,7 @@ def grade_questions_with_book_answers(extracted_questions: ExtractedQuestions, b
 
         print("Sending questions to Gemini for grading with book answers...")
         grading_response = gemini_client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3-flash-preview',
             contents=[ai_grading_prompt],
             config=types.GenerateContentConfig(
                 response_mime_type='application/json',
@@ -591,15 +591,15 @@ def save_worksheet_results_to_mongodb(student_token_number: str, worksheet_ident
         
         if is_book_answer_graded:
             grading_method = "gemini-with-book-answers"
-            processed_with = "gemini-2.5-flash-with-book-answers"
+            processed_with = "gemini-3-flash-preview-with-book-answers"
             has_answer_key = True
         elif is_ai_graded_worksheet:
             grading_method = "gemini-ai-grading"
-            processed_with = "gemini-2.5-flash"
+            processed_with = "gemini-3-flash-preview"
             has_answer_key = False
         else:
             grading_method = "gemini-ocr-with-book-comparison"
-            processed_with = "gemini-2.5-flash-plus-book-comparison"
+            processed_with = "gemini-3-flash-preview-plus-book-comparison"
             has_answer_key = True
         
         mongodb_document = {
