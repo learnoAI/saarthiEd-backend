@@ -1,0 +1,132 @@
+{
+  "total_errors": 195,
+  "analyzed_at": "2026-02-05T05:59:50.457399+00:00",
+  "error_types": {
+    "GRADING_PROCESS_ERROR": {
+      "count": 163,
+      "percentage": 83.59,
+      "unique_messages": [
+        "argument of type 'NoneType' is not iterable"
+      ],
+      "unique_message_count": 1,
+      "sample_errors": [
+        {
+          "error_message": "argument of type 'NoneType' is not iterable",
+          "payload": {
+            "worksheet_name": "850",
+            "image_count": 2
+          },
+          "timestamp": "2026-01-22T11:15:06.235426"
+        },
+        {
+          "error_message": "argument of type 'NoneType' is not iterable",
+          "payload": {
+            "worksheet_name": "1330",
+            "image_count": 2
+          },
+          "timestamp": "2026-01-22T12:01:14.979513"
+        },
+        {
+          "error_message": "argument of type 'NoneType' is not iterable",
+          "payload": {
+            "worksheet_name": "1330",
+            "image_count": 2
+          },
+          "timestamp": "2026-01-22T12:14:44.259366"
+        }
+      ],
+      "common_exceptions": [
+        {
+          "type": "TypeError",
+          "count": 163
+        }
+      ]
+    },
+    "OCR_ERROR": {
+      "count": 28,
+      "percentage": 14.36,
+      "unique_messages": [
+        "503 UNAVAILABLE. {'error': {'code': 503, 'message': 'Deadline expired before operation could complete.', 'status': 'UNAVAILABLE'}}",
+        "503 UNAVAILABLE. {'error': {'code': 503, 'message': 'The model is overloaded. Please try again later.', 'status': 'UNAVAILABLE'}}",
+        "503 UNAVAILABLE. {'error': {'code': 503, 'message': 'The request timed out. Please try again.', 'status': 'UNAVAILABLE'}}",
+        "503 UNAVAILABLE. {'error': {'code': 503, 'message': 'Visibility check was unavailable. Please retry the request and contact support if the problem persists', 'status': 'UNAVAILABLE'}}"
+      ],
+      "unique_message_count": 4,
+      "sample_errors": [
+        {
+          "error_message": "503 UNAVAILABLE. {'error': {'code': 503, 'message': 'Visibility check was unavailable. Please retry the request and contact support if the problem persists', 'status': 'UNAVAILABLE'}}",
+          "payload": {
+            "worksheet_name": "173",
+            "image_count": 2
+          },
+          "timestamp": "2026-01-22T11:15:07.251942"
+        },
+        {
+          "error_message": "503 UNAVAILABLE. {'error': {'code': 503, 'message': 'The model is overloaded. Please try again later.', 'status': 'UNAVAILABLE'}}",
+          "payload": {
+            "worksheet_name": "1822",
+            "image_count": 2
+          },
+          "timestamp": "2026-01-23T10:56:12.865051"
+        },
+        {
+          "error_message": "503 UNAVAILABLE. {'error': {'code': 503, 'message': 'Deadline expired before operation could complete.', 'status': 'UNAVAILABLE'}}",
+          "payload": {
+            "worksheet_name": "1322",
+            "image_count": 2
+          },
+          "timestamp": "2026-01-23T13:42:46.870298"
+        }
+      ],
+      "common_exceptions": [
+        {
+          "type": "ServerError",
+          "count": 28
+        }
+      ]
+    },
+    "BOOK_GRADING_JSON_DECODE_ERROR": {
+      "count": 4,
+      "percentage": 2.05,
+      "unique_messages": [
+        "Expecting property name enclosed in double quotes: line 261 column 7 (char 6808)",
+        "Unterminated string starting at: line 18 column 19 (char 68291)",
+        "Unterminated string starting at: line 260 column 7 (char 6894)",
+        "Unterminated string starting at: line 8 column 19 (char 152)"
+      ],
+      "unique_message_count": 4,
+      "sample_errors": [
+        {
+          "error_message": "Unterminated string starting at: line 18 column 19 (char 68291)",
+          "payload": {
+            "question_count": 2,
+            "book_answers_count": 40
+          },
+          "timestamp": "2026-01-29T11:46:12.719044"
+        },
+        {
+          "error_message": "Expecting property name enclosed in double quotes: line 261 column 7 (char 6808)",
+          "payload": {
+            "question_count": 40,
+            "book_answers_count": 40
+          },
+          "timestamp": "2026-01-29T11:57:34.433409"
+        },
+        {
+          "error_message": "Unterminated string starting at: line 260 column 7 (char 6894)",
+          "payload": {
+            "question_count": 35,
+            "book_answers_count": 40
+          },
+          "timestamp": "2026-01-29T12:29:06.994395"
+        }
+      ],
+      "common_exceptions": [
+        {
+          "type": "JSONDecodeError",
+          "count": 4
+        }
+      ]
+    }
+  }
+}

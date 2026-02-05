@@ -14,6 +14,11 @@ from datetime import datetime
 
 executor = ThreadPoolExecutor(max_workers=min(20, (os.cpu_count() or 1) * 4))
 
+# Request size limits
+MAX_FILE_SIZE_MB = 10  # 10MB per file
+MAX_TOTAL_SIZE_MB = 50  # 50MB total request size
+MAX_FILES_PER_REQUEST = 10  # Maximum 10 files per request
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
@@ -36,6 +41,73 @@ async def root() -> Dict[str, str]:
 @app.get("/healthcheck")
 async def healthcheck() -> Dict[str, str]:
     return {"message": "ok"}
+
+async def validate_uploaded_files(files: List[UploadFile]) -> None:
+    """
+    Validate uploaded files before processing.
+    Checks file count, individual sizes, and total payload size.
+
+    Raises:
+        HTTPException: If validation fails
+    """
+    # Check file count
+    if len(files) > MAX_FILES_PER_REQUEST:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many files. Maximum {MAX_FILES_PER_REQUEST} files allowed, received {len(files)}"
+        )
+
+    # Check individual file sizes and types
+    total_size = 0
+    for file in files:
+        # Get file size
+        file.file.seek(0, 2)  # Seek to end
+        file_size = file.file.tell()
+        file.file.seek(0)  # Reset to beginning
+
+        file_size_mb = file_size / 1024 / 1024
+
+        if file_size_mb > MAX_FILE_SIZE_MB:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File {file.filename} exceeds maximum size of {MAX_FILE_SIZE_MB}MB (size: {file_size_mb:.2f}MB)"
+            )
+
+        total_size += file_size_mb
+
+    # Check total payload size
+    if total_size > MAX_TOTAL_SIZE_MB:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Total payload size {total_size:.2f}MB exceeds maximum {MAX_TOTAL_SIZE_MB}MB"
+        )
+
+async def cleanup_temp_files(paths: List[str]):
+    """
+    Cleanup temporary files with proper error handling.
+    Guaranteed to run even if processing fails.
+    """
+    if not paths:
+        return
+
+    cleanup_errors = []
+    for path in paths:
+        try:
+            if os.path.exists(path):
+                os.unlink(path)
+                print(f"Cleaned up temp file: {path}")
+        except Exception as e:
+            cleanup_errors.append(f"{path}: {str(e)}")
+            print(f"Failed to cleanup {path}: {str(e)}")
+
+    if cleanup_errors:
+        print(f"Cleanup completed with {len(cleanup_errors)} errors")
+        # Log cleanup failures for monitoring
+        log_error(
+            "TEMP_FILE_CLEANUP_ERROR",
+            f"Failed to cleanup {len(cleanup_errors)} temp files",
+            {"failed_paths": cleanup_errors}
+        )
 
 async def process_student_worksheet(token_no: str, worksheet_name: str, files: List[UploadFile]) -> Dict[str, Any]:
     temp_paths = []
@@ -118,14 +190,8 @@ async def process_student_worksheet(token_no: str, worksheet_name: str, files: L
 
         return error_info
     finally:
-        async def cleanup_temp_files():
-            for path in temp_paths:
-                try:
-                    os.unlink(path)
-                except:
-                    pass
-        
-        asyncio.create_task(cleanup_temp_files())
+        # Await cleanup to ensure temp files are deleted
+        await cleanup_temp_files(temp_paths)
 
 @app.post("/process-worksheets")
 async def process_worksheets(token_no: str, worksheet_name: str, files: List[UploadFile] = File(...)) -> Dict[str, Any]:
@@ -143,10 +209,13 @@ async def process_worksheets(token_no: str, worksheet_name: str, files: List[Upl
         ext = os.path.splitext(file.filename)[1].lower()
         if ext not in allowed_extensions:
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail=f"File {file.filename} has unsupported format. Allowed: {', '.join(allowed_extensions)}"
             )
-    
+
+    # Validate file sizes before processing
+    await validate_uploaded_files(files)
+
     print(f"Processing {len(files)} images for worksheet {worksheet_name}, token {token_no}")
     
     return await process_student_worksheet(token_no, worksheet_name, files)

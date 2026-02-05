@@ -1,7 +1,7 @@
 import json
 import re
 from typing import List, Dict, Any, Optional
-from conns import r2_client, gemini_client, collection, openai_client, error_logs_collection 
+from conns import r2_client, gemini_client, collection, openai_client, error_logs_collection
 from google.genai import types
 from datetime import datetime, timedelta
 from PIL import Image
@@ -10,6 +10,7 @@ import concurrent.futures
 from pathlib import Path
 import base64
 import os
+from threading import Lock
 from schema import ExtractedQuestions, GradingResult
 
 # Constants
@@ -18,6 +19,31 @@ S3_REGION = "ap-south-1"
 PNG_QUALITY = 100
 MAX_WORKER_THREADS = 4
 TOTAL_POSSIBLE_POINTS = 40
+
+# Book worksheets caching
+_book_worksheets_cache = None
+_cache_timestamp = None
+_cache_lock = Lock()
+CACHE_TTL_SECONDS = 3600  # 1 hour TTL
+def safe_truncate_for_logging(text: str, max_length: int = 200) -> str:
+    """
+    Safely truncate text for logging with clear truncation indicator.
+
+    Args:
+        text: Text to truncate
+        max_length: Maximum length (default 200 chars)
+
+    Returns:
+        Truncated string with indicator if truncated
+    """
+    if text is None:
+        return "None"
+
+    text_str = str(text)
+    if len(text_str) <= max_length:
+        return text_str
+
+    return text_str[:max_length] + f"... [+{len(text_str) - max_length} chars]"
 
 def log_error(error_type: str, error_message: str, payload: Dict[str, Any] = None, stack_trace: str = None) -> Optional[str]:
     """Log errors to the error_logs collection in MongoDB."""
@@ -38,13 +64,46 @@ def log_error(error_type: str, error_message: str, payload: Dict[str, Any] = Non
         return None
 
 def load_book_worksheets_answers() -> Dict[str, Any]:
-    try:
-        book_worksheets_path = Path(__file__).parent / 'Results' / 'book_worksheets.json'
-        with open(book_worksheets_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except Exception as e:
-        print(f"Error loading book worksheets: {str(e)}")
-        return {}
+    """
+    Load book worksheets with LRU cache and TTL.
+    Cache expires after 1 hour to ensure fresh data.
+    Thread-safe for concurrent requests.
+    """
+    global _book_worksheets_cache, _cache_timestamp
+
+    with _cache_lock:
+        now = datetime.utcnow()
+
+        # Check if cache exists and is still valid
+        if (_book_worksheets_cache is not None and
+            _cache_timestamp is not None and
+            (now - _cache_timestamp).total_seconds() < CACHE_TTL_SECONDS):
+            print(f"Using cached book worksheets (age: {(now - _cache_timestamp).total_seconds():.0f}s)")
+            return _book_worksheets_cache
+
+        # Cache miss or expired - load from disk
+        try:
+            book_worksheets_path = Path(__file__).parent / 'Results' / 'book_worksheets.json'
+            with open(book_worksheets_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            _book_worksheets_cache = data
+            _cache_timestamp = now
+            print(f"Loaded book worksheets into cache ({len(str(data))} bytes)")
+            return data
+
+        except Exception as e:
+            print(f"Error loading book worksheets: {str(e)}")
+            # Return empty dict but don't cache failures
+            return {}
+
+def clear_book_worksheets_cache():
+    """Manually clear the cache if needed (e.g., after updates)."""
+    global _book_worksheets_cache, _cache_timestamp
+    with _cache_lock:
+        _book_worksheets_cache = None
+        _cache_timestamp = None
+        print("Book worksheets cache cleared")
 
 def find_worksheet_answers(worksheet_name: str, book_worksheets_data: Dict[str, Any]) -> Optional[List[str]]:
     try:
@@ -305,7 +364,21 @@ def grade_questions_with_gemini_ai(extracted_questions: ExtractedQuestions) -> D
         # )
         # grading_response_text = grading_response.output_text
 
+        # Parse JSON response
         parsed_grading_result = json.loads(grading_response_text)
+
+        # Check if parsing failed
+        if "error" in parsed_grading_result and not parsed_grading_result.get("question_scores"):
+            log_error(
+                "GRADING_JSON_DECODE_ERROR",
+                parsed_grading_result["error"],
+                {
+                    "question_count": len(extracted_questions.questions),
+                    "response_preview": safe_truncate_for_logging(grading_response_text)
+                }
+            )
+            return parsed_grading_result
+
         print(parsed_grading_result)
         individual_question_scores = parsed_grading_result.get("question_scores", [])
         incorrect_questions = []
@@ -423,7 +496,22 @@ def grade_questions_with_book_answers(extracted_questions: ExtractedQuestions, b
         )
         grading_response_text = grading_response.text
 
+        # Parse JSON response
         parsed_grading_result = json.loads(grading_response_text)
+
+        # Check if parsing failed
+        if "error" in parsed_grading_result and not parsed_grading_result.get("question_scores"):
+            log_error(
+                "BOOK_GRADING_JSON_DECODE_ERROR",
+                parsed_grading_result["error"],
+                {
+                    "question_count": len(extracted_questions.questions),
+                    "book_answers_count": len(book_answers),
+                    "response_preview": safe_truncate_for_logging(grading_response_text)
+                }
+            )
+            return parsed_grading_result
+
         print(parsed_grading_result)
         individual_question_scores = parsed_grading_result.get("question_scores", [])
         incorrect_questions = []
@@ -469,8 +557,8 @@ def grade_questions_with_book_answers(extracted_questions: ExtractedQuestions, b
 def process_worksheet_with_gemini_direct_grading(image_bytes_list: List[bytes], worksheet_name: str) -> Dict[str, Any]:
     try:
         extraction_result = extract_questions_with_gemini_ocr(image_bytes_list, worksheet_name)
-        
-        if "error" in extraction_result:
+
+        if isinstance(extraction_result, dict) and "error" in extraction_result:
             return extraction_result
         
         book_worksheets_data = load_book_worksheets_answers()
