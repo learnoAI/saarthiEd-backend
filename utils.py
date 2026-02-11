@@ -348,7 +348,7 @@ def grade_questions_with_gemini_ai(extracted_questions: ExtractedQuestions) -> D
                 response_mime_type='application/json',
                 response_schema=GradingResult,
                 temperature=0.1,
-                # thinking_config=types.ThinkingConfig(thinking_budget=0)
+                thinking_config=types.ThinkingConfig(thinking_budget=0)
             )
         )
         grading_response_text = grading_response.text
@@ -491,7 +491,7 @@ def grade_questions_with_book_answers(extracted_questions: ExtractedQuestions, b
                 response_mime_type='application/json',
                 response_schema=GradingResult,
                 temperature=0.1,
-                # thinking_config=types.ThinkingConfig(thinking_budget=0)
+                thinking_config=types.ThinkingConfig(thinking_budget=0)
             )
         )
         grading_response_text = grading_response.text
