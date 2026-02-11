@@ -38,7 +38,7 @@ class getImages(BaseModel):
 class gradeDetails(BaseModel):
     token_no: str = Field(..., description="The unique identifier for the student")
     worksheet_name: str = Field(..., description="The name of the worksheet")
-    overall_score: int
+    overall_score: float | None = None
 
 class TimeRangeFilter(BaseModel):
     full: bool

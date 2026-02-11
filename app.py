@@ -288,18 +288,21 @@ async def total_ai_graded(time_filter: TimeRangeFilter):
 async def get_student_gradind_details(req: gradeDetails):
     query = {"token_no": req.token_no, 
              "worksheet_name": req.worksheet_name,
-             "overall_score": req.overall_score,
              "question_scores": {
                     "$exists": True,
-                    "$ne": None,
-                    "$ne": "NA"
+                    "$nin": [None, "NA"]
                 }}
+    
+    # Only filter by overall_score if provided
+    if req.overall_score is not None:
+        query["overall_score"] = req.overall_score
     
     projection = {
         "token_no": 0,
         "worksheet_name": 0,
         "filename": 0,
         "s3_urls": 0,
+        "s3_url": 0,
         "image_count": 0,
         "filenames": 0,
         "_id": 0,
@@ -307,8 +310,7 @@ async def get_student_gradind_details(req: gradeDetails):
         "has_answer_key": 0,
         "timestamp": 0,
         "processed_with": 0,
-        "reason_why": 0,
-        "overall_feedback": 0
+        "reason_why": 0
     }
     
     loop = asyncio.get_event_loop()
@@ -316,6 +318,14 @@ async def get_student_gradind_details(req: gradeDetails):
         executor,
         lambda: collection.find_one(query, projection=projection)
     )
+    
+    # Fallback: if not found with overall_score, retry without it
+    if doc is None and req.overall_score is not None:
+        fallback_query = {k: v for k, v in query.items() if k != "overall_score"}
+        doc = await loop.run_in_executor(
+            executor,
+            lambda: collection.find_one(fallback_query, projection=projection)
+        )
     
     if doc is None:
         raise HTTPException(status_code=404, detail="Student grading details not found")
