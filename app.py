@@ -19,6 +19,11 @@ MAX_FILE_SIZE_MB = 10  # 10MB per file
 MAX_TOTAL_SIZE_MB = 50  # 50MB total request size
 MAX_FILES_PER_REQUEST = 10  # Maximum 10 files per request
 
+# Per-process concurrency limiter for the expensive AI grading step (Gemini calls).
+# This prevents "AI Grade All" bursts from overwhelming the grader or hitting upstream rate limits.
+GRADING_CONCURRENCY = max(1, int(os.getenv("GRADING_CONCURRENCY", "1")))
+grading_semaphore = asyncio.Semaphore(GRADING_CONCURRENCY)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
@@ -142,9 +147,10 @@ async def process_student_worksheet(token_no: str, worksheet_name: str, files: L
             all_image_bytes.append(content)
         
         loop = asyncio.get_event_loop()
-        grading_result = await loop.run_in_executor(
-            executor, process_worksheet_with_gemini_direct_grading, all_image_bytes, worksheet_name
-        )
+        async with grading_semaphore:
+            grading_result = await loop.run_in_executor(
+                executor, process_worksheet_with_gemini_direct_grading, all_image_bytes, worksheet_name
+            )
         
         if "error" in grading_result:
             return {"filename": ", ".join(combined_filenames), "error": grading_result["error"], "success": False}
