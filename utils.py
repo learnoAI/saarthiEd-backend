@@ -235,13 +235,13 @@ def extract_questions_with_gemini_ocr(image_bytes_list: List[bytes], worksheet_n
             
         print(f"Sending {len(processed_images)} images to Gemini OCR in a single request...")
         gemini_response = gemini_client.models.generate_content(
-            model='gemini-3-flash-preview',
+            model='gemini-2.0-flash',
             contents=gemini_content_parts,
             config=types.GenerateContentConfig(
                 response_mime_type='application/json',
                 response_schema=ExtractedQuestions,
                 temperature=0.1,
-                thinking_config=types.ThinkingConfig(thinking_budget=0)
+                # thinking_config=types.ThinkingConfig(thinking_budget=0)
             )
         )
         
@@ -348,7 +348,7 @@ def grade_questions_with_gemini_ai(extracted_questions: ExtractedQuestions) -> D
                 response_mime_type='application/json',
                 response_schema=GradingResult,
                 temperature=0.1,
-                # thinking_config=types.ThinkingConfig(thinking_budget=0)
+                thinking_config=types.ThinkingConfig(thinking_budget=0)
             )
         )
         grading_response_text = grading_response.text
@@ -485,7 +485,7 @@ def grade_questions_with_book_answers(extracted_questions: ExtractedQuestions, b
 
         print("Sending questions to Gemini for grading with book answers...")
         grading_response = gemini_client.models.generate_content(
-            model='gemini-3-flash-preview',
+            model='gemini-2.0-flash',
             contents=[ai_grading_prompt],
             config=types.GenerateContentConfig(
                 response_mime_type='application/json',
